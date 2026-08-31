@@ -25,8 +25,10 @@ faces. Their upstream source remains in the repository, unbuilt, so an
 upstream merge stays reviewable.
 
 Three null controller pointers remain in the display-controller aggregate only
-because InfiniSim compiles all upstream screen headers. They are compatibility
-hooks for those excluded traits, not live services or app registrations.
+because InfiniSim compiles all upstream screen sources. They are compatibility
+hooks for those excluded traits, not live services or app registrations. A
+simulator-only zero-sized weather-font stub lets those unreachable upstream
+weather sources link without adding the weather font to the watch build.
 
 `Settings` keeps the complete upstream persisted-settings layout, including
 fields used by removed features. Do not delete or reorder those fields: the
@@ -87,10 +89,17 @@ git log --oneline --decorate -1
 
 Build with the documented toolchain/container workflow in
 [Build with Docker](buildWithDocker.md), then build both the application and
-recovery artifacts. The CI workflow covers pushes and pull requests targeting
-this branch. The LittleFS target disables debug logging because the pinned
-LittleFS debug trace has more formatting arguments than the nRF5 SDK logger;
-this affects diagnostics only, not file-system behaviour.
+recovery artifacts. The CI workflow is configured for pushes and pull requests
+targeting this branch. On a fork whose default branch does not yet contain the
+workflow, validate locally first: GitHub will not expose that branch-only
+workflow for manual dispatch. The LittleFS target disables debug logging
+because the pinned LittleFS debug trace has more formatting arguments than the
+nRF5 SDK logger; this affects diagnostics only, not file-system behaviour.
+
+The companion InfiniSim build is also required after display changes. It
+compiles the complete upstream source tree, which catches integration errors in
+the surviving Terminal, Digital, and heart-rate screens even though production
+ElixirTime deliberately builds a smaller target.
 
 To bring in a later upstream release, create a temporary maintenance branch,
 merge or rebase onto the desired upstream tag, build both targets, inspect the
