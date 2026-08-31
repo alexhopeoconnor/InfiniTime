@@ -77,6 +77,78 @@ The included charging cable supplies power only; it is not a USB data or SWD
 debug connection. Physical recovery/debugging needs suitable SWD pogo pins
 and a compatible programmer; see [SWD](SWD.md).
 
+## Desktop diagnostics and companion boundaries
+
+The normal long-term companion is the phone, not this development computer.
+Use a desktop BLE connection only for a short, explicit diagnostic or DFU
+session, and disconnect it afterwards so the phone can reconnect.
+
+[ITD](https://github.com/Elara6331/itd) and its `itctl` command are useful
+Linux diagnostics: they can read battery, heart rate, steps, and motion, set
+the clock, and stream heart-rate or step notifications. `itctl` is a client of
+the long-running `itd` daemon, however, rather than a direct one-shot BLE
+tool. ITD's defaults reconnect, set the clock, and send connection
+notifications, and it also includes services outside ElixirTime's scope.
+
+Do not enable ITD as a login service. If it is used for a debugging session,
+start it manually with this conservative configuration, then stop it at the
+end of the session:
+
+```toml
+[conn]
+reconnect = false
+
+[on.connect]
+notify = false
+setTime = false
+
+[on.reconnect]
+notify = false
+setTime = false
+
+[weather]
+enabled = false
+
+[metrics]
+enabled = false
+
+[fuse]
+enabled = false
+```
+
+ITD currently has no general switch to turn off its desktop-notification relay
+or music initialisation. Do not run it on a desktop that may produce
+notifications unless forwarding those notifications briefly is acceptable. A
+warning about the missing Music service is expected: ElixirTime intentionally
+omits Music, Navigation, and Weather and must not restore them just to silence
+a companion warning.
+
+The permitted inspection commands are:
+
+```sh
+itctl fw version
+itctl get battery
+itctl get heart
+itctl get steps
+itctl get motion
+itctl watch heart --json
+itctl watch steps --json
+```
+
+`itctl set time now` is safe when a time change is intended, but it changes
+state. Do not use ITD's firmware-upgrade, resource-loading, filesystem-write,
+notification, or weather commands for ElixirTime maintenance.
+
+For OTA, use the controlled legacy application-DFU route described above, not
+`itctl firmware upgrade`. It must be run from an isolated Python environment
+with BlueZ `gatttool`, `pexpect`, and `intelhex`, after a read-only connection
+and service-discovery preflight. The DFU archive must be the exact checked
+application artifact; wait for validation and activation/reset, then confirm
+the running version. The checkout contains the legacy controller under
+`bootloader/ota-dfu-python/`; the successful ElixirTime flash used a
+disposable copy with longer connection/discovery timeouts, so revalidate the
+tool before relying on it in a new host environment.
+
 ## Building and maintaining
 
 Initial repository setup:
