@@ -24,6 +24,10 @@ the weather app and setting, the Motion app, and the unused upstream watch
 faces. Their upstream source remains in the repository, unbuilt, so an
 upstream merge stays reviewable.
 
+Three null controller pointers remain in the display-controller aggregate only
+because InfiniSim compiles all upstream screen headers. They are compatibility
+hooks for those excluded traits, not live services or app registrations.
+
 `Settings` keeps the complete upstream persisted-settings layout, including
 fields used by removed features. Do not delete or reorder those fields: the
 layout is compatibility data, and unused values are harmless.

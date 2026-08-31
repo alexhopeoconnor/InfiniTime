@@ -111,11 +111,14 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                  stopWatchController,
                  alarmController,
                  brightnessController,
+                 nullptr,
                  filesystem,
                  timer,
                  nullptr,
                  this,
-                 lvgl} {
+                 lvgl,
+                 nullptr,
+                 nullptr} {
 }
 
 void DisplayApp::Start(System::BootErrors error) {
