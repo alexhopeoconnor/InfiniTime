@@ -3,6 +3,7 @@
 #include <components/heartrate/HeartRateController.h>
 
 #include "displayapp/DisplayApp.h"
+#include "displayapp/HeartRateReading.h"
 #include "displayapp/InfiniTimeTheme.h"
 
 using namespace Pinetime::Applications::Screens;
@@ -78,18 +79,18 @@ void HeartRate::Refresh() {
 
   auto state = heartRateController.State();
   const auto now = xTaskGetTickCount();
-  const auto readingStatus = heartRateController.GetReadingStatus(now);
+  const auto readingStatus = Pinetime::Applications::GetHeartRateReadingStatus(heartRateController, now);
 
-  if (readingStatus == Controllers::HeartRateController::ReadingStatus::Unavailable) {
+  if (readingStatus == Pinetime::Applications::HeartRateReadingStatus::Unavailable) {
     lv_label_set_text_static(label_hr, "---");
   } else {
     lv_label_set_text_fmt(label_hr, "%03d", heartRateController.HeartRate());
   }
 
-  if (readingStatus == Controllers::HeartRateController::ReadingStatus::Stale) {
+  if (readingStatus == Pinetime::Applications::HeartRateReadingStatus::Stale) {
     lv_label_set_text_fmt(label_status,
                           "Signal lost\nlast good reading %lus ago",
-                          heartRateController.LastValidHeartRateAgeSeconds(now));
+                          Pinetime::Applications::LastHeartRateAgeSeconds(heartRateController, now));
   } else {
     lv_label_set_text_static(label_status, ToString(state));
   }

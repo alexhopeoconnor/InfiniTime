@@ -134,23 +134,23 @@ void WatchFaceTerminal::Refresh() {
   heartbeat = heartRateController.HeartRate();
   heartbeatRunning = heartRateController.State() != Controllers::HeartRateController::States::Stopped;
   const auto now = xTaskGetTickCount();
-  heartRateAgeSeconds = heartRateController.LastValidHeartRateAgeSeconds(now);
-  const auto heartRateStatus = heartRateController.GetReadingStatus(now);
+  heartRateAgeSeconds = LastHeartRateAgeSeconds(heartRateController, now);
+  const auto heartRateStatus = GetHeartRateReadingStatus(heartRateController, now);
   if (heartbeat.IsUpdated() || heartbeatRunning.IsUpdated() || heartRateAgeSeconds.IsUpdated() || heartRateStatus != lastHeartRateStatus) {
     lastHeartRateStatus = heartRateStatus;
     switch (heartRateStatus) {
-      case Controllers::HeartRateController::ReadingStatus::Fresh:
+      case HeartRateReadingStatus::Fresh:
         lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::deepOrange);
         lv_label_set_text_fmt(heartbeatValue, "#ffffff [L_HR]# %d bpm", heartbeat.Get());
         break;
-      case Controllers::HeartRateController::ReadingStatus::Stale:
+      case HeartRateReadingStatus::Stale:
         lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
         lv_label_set_text_fmt(heartbeatValue,
                               "#ffffff [L_HR]# ~%d bpm, %lus ago",
                               heartbeat.Get(),
                               heartRateAgeSeconds.Get());
         break;
-      case Controllers::HeartRateController::ReadingStatus::Unavailable:
+      case HeartRateReadingStatus::Unavailable:
         lv_label_set_text_static(heartbeatValue,
                                  heartbeatRunning.Get() ? "#ffffff [L_HR]# acquiring signal" : "#ffffff [L_HR]# ---");
         lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::gray);

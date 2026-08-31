@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <memory>
 #include "displayapp/screens/Screen.h"
+#include "displayapp/HeartRateReading.h"
 #include "components/datetime/DateTimeController.h"
 #include "components/heartrate/HeartRateController.h"
 #include "components/ble/BleController.h"
@@ -49,8 +50,7 @@ namespace Pinetime {
         Utility::DirtyValue<uint8_t> heartbeat {};
         Utility::DirtyValue<bool> heartbeatRunning {};
         Utility::DirtyValue<uint32_t> heartRateAgeSeconds {};
-        Controllers::HeartRateController::ReadingStatus lastHeartRateStatus =
-          Controllers::HeartRateController::ReadingStatus::Unavailable;
+        HeartRateReadingStatus lastHeartRateStatus = HeartRateReadingStatus::Unavailable;
         Utility::DirtyValue<bool> notificationState {};
 
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::days>> currentDate;
