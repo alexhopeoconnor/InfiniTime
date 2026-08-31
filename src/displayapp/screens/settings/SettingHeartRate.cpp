@@ -1,5 +1,6 @@
 #include "displayapp/screens/settings/SettingHeartRate.h"
 #include <lvgl/lvgl.h>
+#include "components/heartrate/HeartRateController.h"
 #include "displayapp/screens/Styles.h"
 #include "displayapp/screens/Symbols.h"
 
@@ -10,9 +11,20 @@ namespace {
     auto* screen = static_cast<SettingHeartRate*>(obj->user_data);
     screen->UpdateSelected(obj, event);
   }
+
+  template <typename Controller>
+  void NotifyBackgroundSettingsChanged(Controller& controller) {
+    // InfiniSim provides a lightweight heart-rate controller. It has no
+    // sensor task to reschedule, while the device controller does.
+    if constexpr (requires { controller.OnBackgroundSettingsChanged(); }) {
+      controller.OnBackgroundSettingsChanged();
+    }
+  }
 }
 
-SettingHeartRate::SettingHeartRate(Pinetime::Controllers::Settings& settingsController) : settingsController {settingsController} {
+SettingHeartRate::SettingHeartRate(Pinetime::Controllers::Settings& settingsController,
+                                   Pinetime::Controllers::HeartRateController& heartRateController)
+  : settingsController {settingsController}, heartRateController {heartRateController} {
   lv_obj_t* container = lv_cont_create(lv_scr_act(), nullptr);
 
   lv_obj_set_style_local_bg_opa(container, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_TRANSP);
@@ -26,8 +38,8 @@ SettingHeartRate::SettingHeartRate(Pinetime::Controllers::Settings& settingsCont
   lv_cont_set_layout(container, LV_LAYOUT_PRETTY_TOP);
 
   lv_obj_t* title = lv_label_create(lv_scr_act(), nullptr);
-  lv_label_set_text_static(title, "Backg. Interval");
-  lv_label_set_text(title, "Backg. Interval");
+  lv_label_set_text_static(title, "Auto sampling");
+  lv_label_set_text(title, "Auto sampling");
   lv_label_set_align(title, LV_LABEL_ALIGN_CENTER);
   lv_obj_align(title, lv_scr_act(), LV_ALIGN_IN_TOP_MID, 10, 15);
 
@@ -63,6 +75,7 @@ void SettingHeartRate::UpdateSelected(lv_obj_t* object, lv_event_t event) {
       if (object == cbOption[i]) {
         lv_checkbox_set_checked(cbOption[i], true);
         settingsController.SetHeartRateBackgroundMeasurementInterval(options[i].intervalInSeconds);
+        NotifyBackgroundSettingsChanged(heartRateController);
       } else {
         lv_checkbox_set_checked(cbOption[i], false);
       }

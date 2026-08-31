@@ -10,11 +10,15 @@
 
 namespace Pinetime {
 
+  namespace Controllers {
+    class HeartRateController;
+  }
+
   namespace Applications {
     namespace Screens {
       class SettingHeartRate : public Screen {
       public:
-        explicit SettingHeartRate(Pinetime::Controllers::Settings& settings);
+        SettingHeartRate(Pinetime::Controllers::Settings& settings, Pinetime::Controllers::HeartRateController& heartRateController);
         ~SettingHeartRate() override;
 
         void UpdateSelected(lv_obj_t* object, lv_event_t event);
@@ -26,6 +30,7 @@ namespace Pinetime {
         };
 
         Pinetime::Controllers::Settings& settingsController;
+        Pinetime::Controllers::HeartRateController& heartRateController;
 
         static constexpr std::array<Option, 7> options = {{
           {.intervalInSeconds = std::nullopt, .name = " Off"},

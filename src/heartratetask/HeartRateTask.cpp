@@ -110,6 +110,12 @@ void HeartRateTask::Work() {
   lastMeasurementTime = xTaskGetTickCount();
   valueCurrentlyShown = false;
 
+  // A selected interval is an autonomous schedule. It must not require a
+  // hidden first press of Start in the Heart Rate app.
+  if (BackgroundMeasurementInterval().has_value()) {
+    state = States::Waiting;
+  }
+
   while (true) {
     TickType_t delay = CurrentTaskDelay();
     Messages msg;
@@ -122,12 +128,12 @@ void HeartRateTask::Work() {
           if (state == States::Disabled) {
             break;
           }
-          // State is necessarily ForegroundMeasuring
-          // As previously screen was on and measurement is enabled
-          if (BackgroundMeasurementNeeded()) {
-            newState = States::BackgroundMeasuring;
-          } else {
-            newState = States::Waiting;
+          if (state == States::ForegroundMeasuring) {
+            if (BackgroundMeasurementNeeded()) {
+              newState = States::BackgroundMeasuring;
+            } else {
+              newState = States::Waiting;
+            }
           }
           break;
         case Messages::WakeUp:
@@ -135,17 +141,43 @@ void HeartRateTask::Work() {
           if (state == States::Disabled) {
             break;
           }
-          newState = States::ForegroundMeasuring;
+          // A scheduled sample must not turn into continuous foreground
+          // sampling whenever the screen wakes. Only a manual Start does so.
+          if (manualMeasurementRequested) {
+            newState = States::ForegroundMeasuring;
+          }
           break;
         case Messages::Enable:
           // Can only be enabled when the screen is on
           // If this constraint is somehow violated, the unexpected state
           // will self-resolve at the next screen on event
+          manualMeasurementRequested = true;
           newState = States::ForegroundMeasuring;
           valueCurrentlyShown = false;
           break;
         case Messages::Disable:
-          newState = States::Disabled;
+          manualMeasurementRequested = false;
+          // The setting owns the autonomous schedule. Stop the current manual
+          // sample, but keep a configured interval armed; choose Off in
+          // Settings to disable automatic sampling.
+          if (BackgroundMeasurementInterval().has_value()) {
+            lastMeasurementTime = xTaskGetTickCount();
+            newState = States::Waiting;
+          } else {
+            newState = States::Disabled;
+          }
+          break;
+        case Messages::BackgroundSettingsChanged:
+          if (BackgroundMeasurementInterval().has_value()) {
+            // Apply Off -> interval immediately, but let a new schedule wait
+            // one full period before its first background sample.
+            if (state == States::Disabled && !manualMeasurementRequested) {
+              lastMeasurementTime = xTaskGetTickCount();
+              newState = States::Waiting;
+            }
+          } else if (!manualMeasurementRequested) {
+            newState = States::Disabled;
+          }
           break;
       }
     }
@@ -179,6 +211,7 @@ void HeartRateTask::PushMessage(HeartRateTask::Messages msg) {
 }
 
 void HeartRateTask::StartMeasurement() {
+  controller.Update(Controllers::HeartRateController::States::NotEnoughData, 0);
   heartRateSensor.Enable();
   ppg.Reset(true);
   vTaskDelay(100);
@@ -191,6 +224,7 @@ void HeartRateTask::StopMeasurement() {
   heartRateSensor.Disable();
   ppg.Reset(true);
   vTaskDelay(100);
+  controller.Update(Controllers::HeartRateController::States::Stopped, 0);
 }
 
 void HeartRateTask::HandleSensorData() {

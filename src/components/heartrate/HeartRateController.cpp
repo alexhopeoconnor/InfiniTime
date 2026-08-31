@@ -35,6 +35,12 @@ void HeartRateController::Disable() {
   }
 }
 
+void HeartRateController::OnBackgroundSettingsChanged() {
+  if (task != nullptr) {
+    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::BackgroundSettingsChanged);
+  }
+}
+
 void HeartRateController::SetHeartRateTask(Pinetime::Applications::HeartRateTask* task) {
   this->task = task;
 }

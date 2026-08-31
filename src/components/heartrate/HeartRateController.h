@@ -22,6 +22,7 @@ namespace Pinetime {
       HeartRateController() = default;
       void Enable();
       void Disable();
+      void OnBackgroundSettingsChanged();
       void Update(States newState, uint8_t heartRate);
 
       void SetHeartRateTask(Applications::HeartRateTask* task);

@@ -12,8 +12,10 @@ The current product priorities are, in order:
    notifications, and OTA recovery.
 
 Do not start a Home Assistant bridge, persistent desktop companion, new BLE
-protocol, background heart-rate scheduler, or broad feature restoration unless
-the user explicitly asks. The watch has no independent network link; future
+protocol, or broad feature restoration unless the user explicitly asks. The
+existing background heart-rate scheduler is intentionally auto-armed whenever
+the user selects an interval; preserve its distinction from a manual
+foreground measurement. The watch has no independent network link; future
 remote integrations belong primarily on the phone side.
 
 `doc/elixir-time.md` is the product and maintenance guide. Keep its statements

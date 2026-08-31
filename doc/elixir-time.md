@@ -45,8 +45,11 @@ recent verified reading is retained and classified as:
 - **unavailable** after two minutes, or before the first valid reading.
 
 This is a display/data-quality improvement, not a claim of clinical accuracy.
-The sensor still needs a manually started initial measurement before upstream
-background heart-rate scheduling can operate.
+The PPG implementation already averages consecutive valid spectra. ElixirTime
+arms a selected background interval immediately at boot or when it changes in
+Settings; it no longer needs a manually started initial measurement. `Start`
+in the heart-rate app remains the way to request an immediate foreground
+measurement.
 
 ## First upgrade and recovery checklist
 

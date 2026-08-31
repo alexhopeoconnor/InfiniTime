@@ -19,7 +19,7 @@ namespace Pinetime {
   namespace Applications {
     class HeartRateTask {
     public:
-      enum class Messages : uint8_t { GoToSleep, WakeUp, Enable, Disable };
+      enum class Messages : uint8_t { GoToSleep, WakeUp, Enable, Disable, BackgroundSettingsChanged };
 
       explicit HeartRateTask(Drivers::Hrs3300& heartRateSensor,
                              Controllers::HeartRateController& controller,
@@ -43,6 +43,7 @@ namespace Pinetime {
       QueueHandle_t messageQueue;
       bool valueCurrentlyShown;
       bool measurementSucceeded;
+      bool manualMeasurementRequested = false;
       States state = States::Disabled;
       uint16_t count;
       Drivers::Hrs3300& heartRateSensor;
