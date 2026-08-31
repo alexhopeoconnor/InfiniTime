@@ -7,7 +7,7 @@
 #include <displayapp/Controllers.h>
 #include "displayapp/screens/Screen.h"
 #include "components/datetime/DateTimeController.h"
-#include "components/ble/SimpleWeatherService.h"
+#include "components/heartrate/HeartRateController.h"
 #include "utility/DirtyValue.h"
 
 namespace Pinetime {
@@ -31,8 +31,7 @@ namespace Pinetime {
                           Controllers::NotificationManager& notificationManager,
                           Controllers::Settings& settingsController,
                           Controllers::HeartRateController& heartRateController,
-                          Controllers::MotionController& motionController,
-                          Controllers::SimpleWeatherService& weatherService);
+                          Controllers::MotionController& motionController);
         ~WatchFaceTerminal() override;
 
         void Refresh() override;
@@ -46,9 +45,11 @@ namespace Pinetime {
         Utility::DirtyValue<uint32_t> stepCount {};
         Utility::DirtyValue<uint8_t> heartbeat {};
         Utility::DirtyValue<bool> heartbeatRunning {};
+        Utility::DirtyValue<uint32_t> heartRateAgeSeconds {};
+        Controllers::HeartRateController::ReadingStatus lastHeartRateStatus =
+          Controllers::HeartRateController::ReadingStatus::Unavailable;
         Utility::DirtyValue<bool> notificationState {};
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::days>> currentDate;
-        Utility::DirtyValue<std::optional<Controllers::SimpleWeatherService::CurrentWeather>> currentWeather {};
 
         lv_obj_t* container;
         lv_obj_t* notificationIcon;
@@ -58,7 +59,6 @@ namespace Pinetime {
         lv_obj_t* batteryValue;
         lv_obj_t* stepValue;
         lv_obj_t* heartbeatValue;
-        lv_obj_t* weather;
         lv_obj_t* connectState;
         lv_obj_t* labelPrompt2;
 
@@ -69,7 +69,6 @@ namespace Pinetime {
         Controllers::Settings& settingsController;
         Controllers::HeartRateController& heartRateController;
         Controllers::MotionController& motionController;
-        Controllers::SimpleWeatherService& weatherService;
 
         lv_task_t* taskRefresh;
       };
@@ -87,8 +86,7 @@ namespace Pinetime {
                                               controllers.notificationManager,
                                               controllers.settingsController,
                                               controllers.heartRateController,
-                                              controllers.motionController,
-                                              *controllers.weatherController);
+                                              controllers.motionController);
       };
 
       static bool IsAvailable(Pinetime::Controllers::FS& /*filesystem*/) {
