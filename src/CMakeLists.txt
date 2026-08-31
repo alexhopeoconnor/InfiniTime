@@ -366,8 +366,6 @@ list(APPEND SOURCE_FILES
         displayapp/DisplayApp.cpp
         displayapp/screens/Screen.cpp
         displayapp/screens/Tile.cpp
-        displayapp/screens/InfiniPaint.cpp
-        displayapp/screens/Paddle.cpp
         displayapp/screens/StopWatch.cpp
         displayapp/screens/BatteryIcon.cpp
         displayapp/screens/BleIcon.cpp
@@ -375,16 +373,9 @@ list(APPEND SOURCE_FILES
         displayapp/screens/SystemInfo.cpp
         displayapp/screens/Label.cpp
         displayapp/screens/FirmwareUpdate.cpp
-        displayapp/screens/Music.cpp
-        displayapp/screens/Navigation.cpp
-        displayapp/screens/Metronome.cpp
-        displayapp/screens/Motion.cpp
-        displayapp/screens/Weather.cpp
-        displayapp/screens/Calculator.cpp
         displayapp/screens/FirmwareValidation.cpp
         displayapp/screens/ApplicationList.cpp
         displayapp/screens/Notifications.cpp
-        displayapp/screens/Twos.cpp
         displayapp/screens/HeartRate.cpp
         displayapp/screens/FlashLight.cpp
         displayapp/screens/List.cpp
@@ -392,12 +383,10 @@ list(APPEND SOURCE_FILES
         displayapp/screens/BatteryInfo.cpp
         displayapp/screens/Steps.cpp
         displayapp/screens/Timer.cpp
-        displayapp/screens/Dice.cpp
         displayapp/screens/PassKey.cpp
         displayapp/screens/Error.cpp
         displayapp/screens/Alarm.cpp
         displayapp/screens/Styles.cpp
-        displayapp/screens/WeatherSymbols.cpp
         displayapp/Colors.cpp
         displayapp/widgets/Counter.cpp
         displayapp/widgets/PageIndicator.cpp
@@ -409,7 +398,6 @@ list(APPEND SOURCE_FILES
         displayapp/screens/settings/Settings.cpp
         displayapp/screens/settings/SettingWatchFace.cpp
         displayapp/screens/settings/SettingTimeFormat.cpp
-        displayapp/screens/settings/SettingWeatherFormat.cpp
         displayapp/screens/settings/SettingWakeUp.cpp
         displayapp/screens/settings/SettingDisplay.cpp
         displayapp/screens/settings/SettingHeartRate.cpp
@@ -422,14 +410,10 @@ list(APPEND SOURCE_FILES
         displayapp/screens/settings/SettingBluetooth.cpp
         displayapp/screens/settings/SettingOTA.cpp
 
-        ## Watch faces
-        displayapp/screens/WatchFaceAnalog.cpp
+        ## The selected ElixirTime watch faces.  Upstream alternatives remain
+        ## in the tree for straightforward rebases, but are not built.
         displayapp/screens/WatchFaceDigital.cpp
-        displayapp/screens/WatchFaceInfineat.cpp
         displayapp/screens/WatchFaceTerminal.cpp
-        displayapp/screens/WatchFacePineTimeStyle.cpp
-        displayapp/screens/WatchFaceCasioStyleG7710.cpp
-        displayapp/screens/WatchFacePrideFlag.cpp
 
         ##
 
@@ -457,9 +441,6 @@ list(APPEND SOURCE_FILES
         components/ble/DfuService.cpp
         components/ble/CurrentTimeService.cpp
         components/ble/AlertNotificationService.cpp
-        components/ble/MusicService.cpp
-        components/ble/SimpleWeatherService.cpp
-        components/ble/NavigationService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp
         components/ble/ImmediateAlertService.cpp
@@ -528,13 +509,10 @@ list(APPEND RECOVERY_SOURCE_FILES
         components/ble/DfuService.cpp
         components/ble/CurrentTimeService.cpp
         components/ble/AlertNotificationService.cpp
-        components/ble/MusicService.cpp
-        components/ble/SimpleWeatherService.cpp
         components/ble/BatteryInformationService.cpp
         components/ble/FSService.cpp
         components/ble/ImmediateAlertService.cpp
         components/ble/ServiceDiscovery.cpp
-        components/ble/NavigationService.cpp
         components/ble/HeartRateService.cpp
         components/ble/MotionService.cpp
         components/firmwarevalidator/FirmwareValidator.cpp
@@ -657,7 +635,6 @@ set(INCLUDE_FILES
         components/ble/BleClient.h
         components/ble/HeartRateService.h
         components/ble/MotionService.h
-        components/ble/SimpleWeatherService.h
         components/settings/Settings.h
         components/timer/Timer.h
         components/stopwatch/StopWatchController.h
@@ -911,6 +888,10 @@ target_compile_options(littlefs PRIVATE
         $<$<COMPILE_LANGUAGE:CXX>: ${CXX_FLAGS}>
         $<$<COMPILE_LANGUAGE:ASM>: ${ASM_FLAGS}>
         )
+# The nRF5 SDK logging macros accept fewer arguments than the LittleFS 2.4.1
+# debug trace at lfs_dir_compact. LittleFS debug output is not used in the
+# release firmware, so omit it rather than shipping a non-buildable target.
+target_compile_definitions(littlefs PRIVATE LFS_NO_DEBUG)
 
 # Build autonomous binary (without support for bootloader)
 set(EXECUTABLE_NAME "pinetime-app")
@@ -1143,4 +1124,3 @@ endif()
 if(BUILD_RESOURCES)
   add_subdirectory(resources)
 endif()
-

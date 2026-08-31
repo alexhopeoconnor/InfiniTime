@@ -1,7 +1,6 @@
 #include "displayapp/DisplayApp.h"
 #include <libraries/log/nrf_log.h>
 #include "displayapp/screens/HeartRate.h"
-#include "displayapp/screens/Motion.h"
 #include "displayapp/screens/Timer.h"
 #include "displayapp/screens/Alarm.h"
 #include "components/battery/BatteryController.h"
@@ -13,24 +12,15 @@
 #include "displayapp/screens/ApplicationList.h"
 #include "displayapp/screens/FirmwareUpdate.h"
 #include "displayapp/screens/FirmwareValidation.h"
-#include "displayapp/screens/InfiniPaint.h"
-#include "displayapp/screens/Paddle.h"
 #include "displayapp/screens/StopWatch.h"
-#include "displayapp/screens/Metronome.h"
-#include "displayapp/screens/Music.h"
-#include "displayapp/screens/Navigation.h"
 #include "displayapp/screens/Notifications.h"
 #include "displayapp/screens/SystemInfo.h"
 #include "displayapp/screens/Tile.h"
-#include "displayapp/screens/Twos.h"
 #include "displayapp/screens/FlashLight.h"
 #include "displayapp/screens/BatteryInfo.h"
 #include "displayapp/screens/Steps.h"
-#include "displayapp/screens/Dice.h"
-#include "displayapp/screens/Weather.h"
 #include "displayapp/screens/PassKey.h"
 #include "displayapp/screens/Error.h"
-#include "displayapp/screens/Calculator.h"
 
 #include "drivers/Cst816s.h"
 #include "drivers/St7789.h"
@@ -42,7 +32,6 @@
 #include "displayapp/screens/settings/Settings.h"
 #include "displayapp/screens/settings/SettingWatchFace.h"
 #include "displayapp/screens/settings/SettingTimeFormat.h"
-#include "displayapp/screens/settings/SettingWeatherFormat.h"
 #include "displayapp/screens/settings/SettingWakeUp.h"
 #include "displayapp/screens/settings/SettingDisplay.h"
 #include "displayapp/screens/settings/SettingSteps.h"
@@ -122,14 +111,11 @@ DisplayApp::DisplayApp(Drivers::St7789& lcd,
                  stopWatchController,
                  alarmController,
                  brightnessController,
-                 nullptr,
                  filesystem,
                  timer,
                  nullptr,
                  this,
-                 lvgl,
-                 nullptr,
-                 nullptr} {
+                 lvgl} {
 }
 
 void DisplayApp::Start(System::BootErrors error) {
@@ -604,9 +590,6 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
     case Apps::SettingTimeFormat:
       currentScreen = std::make_unique<Screens::SettingTimeFormat>(settingsController);
       break;
-    case Apps::SettingWeatherFormat:
-      currentScreen = std::make_unique<Screens::SettingWeatherFormat>(settingsController);
-      break;
     case Apps::SettingWakeUp:
       currentScreen = std::make_unique<Screens::SettingWakeUp>(settingsController);
       break;
@@ -718,18 +701,6 @@ void DisplayApp::PushMessageToSystemTask(Pinetime::System::Messages message) {
 void DisplayApp::Register(Pinetime::System::SystemTask* systemTask) {
   this->systemTask = systemTask;
   this->controllers.systemTask = systemTask;
-}
-
-void DisplayApp::Register(Pinetime::Controllers::SimpleWeatherService* weatherService) {
-  this->controllers.weatherController = weatherService;
-}
-
-void DisplayApp::Register(Pinetime::Controllers::MusicService* musicService) {
-  this->controllers.musicService = musicService;
-}
-
-void DisplayApp::Register(Pinetime::Controllers::NavigationService* NavigationService) {
-  this->controllers.navigationService = NavigationService;
 }
 
 void DisplayApp::ApplyBrightness() {
