@@ -77,21 +77,22 @@ HeartRate::~HeartRate() {
 void HeartRate::Refresh() {
 
   auto state = heartRateController.State();
-  switch (state) {
-    case Controllers::HeartRateController::States::NoTouch:
-    case Controllers::HeartRateController::States::NotEnoughData:
-      // case Controllers::HeartRateController::States::Stopped:
-      lv_label_set_text_static(label_hr, "---");
-      break;
-    default:
-      if (heartRateController.HeartRate() == 0) {
-        lv_label_set_text_static(label_hr, "---");
-      } else {
-        lv_label_set_text_fmt(label_hr, "%03d", heartRateController.HeartRate());
-      }
+  const auto now = xTaskGetTickCount();
+  const auto readingStatus = heartRateController.GetReadingStatus(now);
+
+  if (readingStatus == Controllers::HeartRateController::ReadingStatus::Unavailable) {
+    lv_label_set_text_static(label_hr, "---");
+  } else {
+    lv_label_set_text_fmt(label_hr, "%03d", heartRateController.HeartRate());
   }
 
-  lv_label_set_text_static(label_status, ToString(state));
+  if (readingStatus == Controllers::HeartRateController::ReadingStatus::Stale) {
+    lv_label_set_text_fmt(label_status,
+                          "Signal lost\nlast good reading %lus ago",
+                          heartRateController.LastValidHeartRateAgeSeconds(now));
+  } else {
+    lv_label_set_text_static(label_status, ToString(state));
+  }
   lv_obj_align(label_status, label_hr, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 }
 

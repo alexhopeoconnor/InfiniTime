@@ -6,9 +6,18 @@ using namespace Pinetime::Controllers;
 
 void HeartRateController::Update(HeartRateController::States newState, uint8_t heartRate) {
   this->state = newState;
-  if (this->heartRate != heartRate) {
+  // A zero is a failed PPG estimate, not a physiological reading.  Preserve
+  // the last verified value and let screens present it as stale or unavailable.
+  if (heartRate != 0 && this->heartRate != heartRate) {
     this->heartRate = heartRate;
-    service->OnNewHeartRateValue(heartRate);
+    hasValidHeartRate = true;
+    lastValidHeartRateTick = xTaskGetTickCount();
+    if (service != nullptr) {
+      service->OnNewHeartRateValue(heartRate);
+    }
+  } else if (heartRate != 0) {
+    hasValidHeartRate = true;
+    lastValidHeartRateTick = xTaskGetTickCount();
   }
 }
 
