@@ -31,16 +31,16 @@ in sync when an ElixirTime-specific design decision changes.
 - Never change, delete, or reinterpret the persisted `Settings` structure just
   because an ElixirTime feature is unbuilt. It remains compatibility data.
 
-## ITD and itctl: optional diagnostics, never the flashing path
+## ITD and itctl: bounded desktop diagnostics and application DFU
 
 `itd` is a Linux daemon and `itctl` is its Unix-socket CLI. `itctl` is **not**
 a direct BLE client: `itd` must be running and retains the active watch
 connection for its lifetime.
 
-Do not install, enable, or autostart `itd` merely to inspect the watch. In
-particular, never run `systemctl --user enable itd` for this project. If the
-user asks to use it, run it manually for a bounded diagnostic session with a
-reviewed configuration, then stop it.
+Do not install, enable, or autostart `itd` as a user service. In particular,
+never run `systemctl --user enable itd` for this project. Run it manually for a
+bounded diagnostic or application-DFU session, then stop it so the phone can
+reconnect.
 
 The upstream defaults are not read-only: they reconnect, set the watch time,
 and send connection notifications. A diagnostic configuration must explicitly
@@ -69,11 +69,13 @@ enabled = false
 enabled = false
 ```
 
-Current ITD has no general switch to disable its desktop-notification relay or
-music initialisation. Do not start it on a desktop that may emit notifications
-unless forwarding them briefly is acceptable. ElixirTime intentionally does
-not expose the Music, Navigation, or Weather services, so a missing-service
-warning is expected and must not be "fixed" by re-adding them.
+The vetted local ITD checkout is
+`/home/alex/Documents/Projects/public/embedded/itd`, on branch
+`elixir-dfu-only` (commit `922aa5a`, based on upstream `b79806e`). Its
+`ELIXIR_DFU_ONLY=1` mode exposes only the temporary local control socket. It
+does not initialise notification relay, music, calls, weather, metrics,
+PureMaps, FUSE, clock setting, or reconnect behaviour. Use that mode for all
+desktop sessions; do not replace it with upstream ITD defaults.
 
 After that configuration is reviewed and the user has authorised the BLE
 session, these are the permitted diagnostic operations:
@@ -89,16 +91,15 @@ itctl watch steps --json
 ```
 
 `itctl set time now` changes the watch clock; use it only when explicitly
-requested. Do not use `itctl firmware upgrade`, `itctl resources`, mutating
-`itctl filesystem` commands, `itctl notify`, or weather-update commands.
+requested. Do not use `itctl resources`, mutating `itctl filesystem` commands,
+`itctl notify`, or weather-update commands.
 
-## Approved OTA update discipline
+## Approved desktop OTA update discipline
 
-ITD is not the approved flasher. Use the phone's existing Gadgetbridge
-installation for normal, application-only OTA. Do not use the vendored Python
-legacy controller or a hand-modified copy of it: its `gatttool` transport is
-not a reliable ElixirTime maintenance path and can report a failed transfer
-poorly.
+Use the vetted DFU-only `itd`/`itctl` path for normal, application-only desktop
+OTA. Do not use the vendored Python legacy controller or a hand-modified copy
+of it: its `gatttool` transport is not a reliable ElixirTime maintenance path
+and can report a failed transfer poorly.
 
 Before an OTA, all of the following are mandatory:
 
@@ -109,10 +110,20 @@ Before an OTA, all of the following are mandatory:
 4. On the watch, enable `Settings -> Over-the-air -> Firmware & files`.
 5. Confirm sufficient battery, an exclusive BLE connection, and a recovery
    route.
-6. In Gadgetbridge, choose only the generated application DFU archive and
-   wait for its success indication and the watch reboot. Verify the
-   ElixirTime identity before any further change.
-7. On the watch, open `Settings -> Firmware` and validate only after the
+6. Start the temporary daemon with `ELIXIR_DFU_ONLY=1`, using a temporary
+   `XDG_CONFIG_HOME` and socket, then prove the connection with `itctl firmware
+   version`. The desktop must be paired with the watch; a stale bond that
+   immediately disconnects must be removed and paired again, never worked
+   around with the legacy script.
+7. Run `scripts/elixir-release-verify.sh`, then send exactly the verified
+   application archive with `itctl --socket-path /tmp/elixir-itd/itd.sock
+   firmware upgrade --archive <absolute-application-zip>`. Keep the client in
+   the foreground until it exits. This uses 20-byte Legacy-DFU packets and can
+   take about nine minutes; do not start another BLE client or interrupt it.
+8. After the expected reboot/disconnect, stop the daemon. Start a fresh
+   DFU-only daemon and require `itctl firmware version` to report the newly
+   built version before treating the transfer as successful.
+9. On the watch, open `Settings -> Firmware` and validate only after the
    Terminal face and core smoke checks succeed.
 
 Never flash a bootloader, recovery image, resource package, or arbitrary

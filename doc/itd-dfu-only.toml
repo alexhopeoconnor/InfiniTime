@@ -1,0 +1,44 @@
+# Temporary, non-companion configuration for a bounded desktop DFU session.
+# Use with XDG_CONFIG_HOME=/tmp/elixir-itd-config and never install as a
+# systemd user service.
+
+[logging]
+level = "debug"
+
+[bluetooth]
+adapter = "hci0"
+
+[socket]
+path = "/tmp/elixir-itd/itd.sock"
+
+[conn]
+reconnect = false
+
+[on.connect]
+notify = false
+setTime = false
+
+[on.reconnect]
+notify = false
+setTime = false
+
+[weather]
+enabled = false
+
+[metrics]
+enabled = false
+
+[metrics.heartRate]
+enabled = false
+
+[metrics.stepCount]
+enabled = false
+
+[metrics.battLevel]
+enabled = false
+
+[metrics.motion]
+enabled = false
+
+[fuse]
+enabled = false

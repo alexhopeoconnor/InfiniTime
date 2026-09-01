@@ -106,12 +106,12 @@ The normal long-term companion is the phone, not this development computer.
 Use a desktop BLE connection only for a short, explicit diagnostic or DFU
 session, and disconnect it afterwards so the phone can reconnect.
 
-[ITD](https://github.com/Elara6331/itd) and its `itctl` command are useful
+[ITD](https://git.elara.ws/Elara6331/itd) and its `itctl` command are useful
 Linux diagnostics: they can read battery, heart rate, steps, and motion, set
 the clock, and stream heart-rate or step notifications. `itctl` is a client of
 the long-running `itd` daemon, however, rather than a direct one-shot BLE
-tool. ITD's defaults reconnect, set the clock, and send connection
-notifications, and it also includes services outside ElixirTime's scope.
+tool. ITD's defaults reconnect, set the clock, send connection notifications,
+and initialise companion services outside ElixirTime's scope.
 
 Do not enable ITD as a login service. If it is used for a debugging session,
 start it manually with this conservative configuration, then stop it at the
@@ -139,12 +139,29 @@ enabled = false
 enabled = false
 ```
 
-ITD currently has no general switch to turn off its desktop-notification relay
-or music initialisation. Do not run it on a desktop that may produce
-notifications unless forwarding those notifications briefly is acceptable. A
-warning about the missing Music service is expected: ElixirTime intentionally
-omits Music, Navigation, and Weather and must not restore them just to silence
-a companion warning.
+The local checkout at `/home/alex/Documents/Projects/public/embedded/itd`
+contains a small reviewed branch, `elixir-dfu-only` at `922aa5a` (on top of
+upstream `b79806e`). Its `ELIXIR_DFU_ONLY=1` mode deliberately starts only the
+Bluetooth connection and local control socket. It does **not** relay desktop
+notifications, initialise music/calls/weather/metrics/PureMaps/FUSE, set the
+watch clock, or reconnect after a disconnect. Always use that mode for an
+ElixirTime desktop session.
+
+The temporary configuration is tracked as
+[`itd-dfu-only.toml`](itd-dfu-only.toml). The compiled binaries and their
+configuration belong in `/tmp`, not in a global package location or a user
+service. If `/tmp/elixir-itd` has been cleared, rebuild from the reviewed
+checkout (the Go module and build caches may also remain in `/tmp`):
+
+```sh
+itd_root=/home/alex/Documents/Projects/public/embedded/itd
+cd "$itd_root"
+git switch elixir-dfu-only
+mkdir -p /tmp/elixir-itd
+GOMODCACHE=/tmp/elixir-itd-go-modcache GOCACHE=/tmp/elixir-itd-go-buildcache go generate .
+GOMODCACHE=/tmp/elixir-itd-go-modcache GOCACHE=/tmp/elixir-itd-go-buildcache go build -trimpath -buildvcs=true -o /tmp/elixir-itd/itd .
+GOMODCACHE=/tmp/elixir-itd-go-modcache GOCACHE=/tmp/elixir-itd-go-buildcache go build -trimpath -buildvcs=true -o /tmp/elixir-itd/itctl ./cmd/itctl
+```
 
 The permitted inspection commands are:
 
@@ -159,15 +176,45 @@ itctl watch steps --json
 ```
 
 `itctl set time now` is safe when a time change is intended, but it changes
-state. Do not use ITD's firmware-upgrade, resource-loading, filesystem-write,
-notification, or weather commands for ElixirTime maintenance.
+state. Do not use resource-loading, filesystem-write, notification, or weather
+commands for ElixirTime maintenance.
 
-For OTA, use the phone's existing Gadgetbridge installation, not `itctl
-firmware upgrade` and not the vendored Python legacy controller. The latter
-uses an unreliable `gatttool` transport and is retained only as upstream
-reference source, not as an ElixirTime tool. Select the exact checked
-application archive in Gadgetbridge, wait for the reboot, verify the
-ElixirTime identity, and then validate it on the watch.
+For a desktop OTA, use only the temporary DFU-only ITD path—not the vendored
+Python legacy controller. The latter uses an unreliable `gatttool` transport
+and is retained only as upstream reference source, not as an ElixirTime tool.
+The current known-good workflow is:
+
+```sh
+# On the watch first: Settings -> Over-the-air -> Firmware & files -> Enabled.
+# Phone Bluetooth off; the PineTime is paired with this PC.
+
+itd_root=/home/alex/Documents/Projects/public/embedded/itd
+itd_run=/tmp/elixir-itd
+itd_cfg=/tmp/elixir-itd-config
+archive="/home/alex/Documents/Projects/public/embedded/InfiniTime/build/output/pinetime-mcuboot-app-dfu-1.16.2.zip"
+
+mkdir -p "$itd_run" "$itd_cfg/itd"
+cp doc/itd-dfu-only.toml "$itd_cfg/itd/itd.toml"
+
+# In one terminal, foreground only; never enable a systemd service.
+ELIXIR_DFU_ONLY=1 XDG_CONFIG_HOME="$itd_cfg" "$itd_run/itd"
+
+# In a second terminal, first prove the live connection and package.
+XDG_CONFIG_HOME="$itd_cfg" "$itd_run/itctl" --socket-path "$itd_run/itd.sock" firmware version
+./scripts/elixir-release-verify.sh "$archive"
+
+# Send only the application ZIP. Do not interrupt the roughly nine-minute transfer.
+XDG_CONFIG_HOME="$itd_cfg" "$itd_run/itctl" --socket-path "$itd_run/itd.sock" \
+  firmware upgrade --archive "$archive"
+```
+
+The archive must contain only `manifest.json`, the application `.bin`, and
+the application `.dat`; it must never contain a bootloader, recovery image, or
+resources. When the client exits, the watch should reboot. Stop the temporary
+daemon, start a fresh DFU-only daemon, and require `firmware version` to report
+the new version. Then check Terminal face/core behaviour on the watch and
+validate it from `Settings -> Firmware`. The fresh daemon is necessary because
+DFU-only mode intentionally does not reconnect after the reboot.
 
 ## Building and maintaining
 

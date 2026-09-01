@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify the only archive that may be selected in Gadgetbridge for ElixirTime.
+# Verify the only archive that may be sent by an ElixirTime DFU client.
 set -euo pipefail
 
 repo_root="$(git rev-parse --show-toplevel)"
@@ -56,4 +56,4 @@ echo "ElixirTime application DFU: $archive"
 echo "Source commit: $(git rev-parse --short=12 HEAD)"
 echo "SHA-256: $(sha256sum "$archive" | awk '{print $1}')"
 echo "Device Information: software=ElixirTime firmware=${version}"
-echo "READY: select only this ZIP in Gadgetbridge; never select another build/output artifact."
+echo "READY: send only this ZIP with the approved application-DFU workflow; never select another build/output artifact."
