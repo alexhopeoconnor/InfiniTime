@@ -32,8 +32,10 @@ namespace Pinetime {
       enum class States : uint8_t { Disabled, Waiting, BackgroundMeasuring, ForegroundMeasuring };
       static void Process(void* instance);
       void HandleSensorData();
+      void HandleMeasurementTimeout(bool reportSignalFailure);
       void StartMeasurement();
       void StopMeasurement();
+      void UpdateMeasurementMode();
 
       [[nodiscard]] bool BackgroundMeasurementNeeded() const;
       [[nodiscard]] std::optional<TickType_t> BackgroundMeasurementInterval() const;

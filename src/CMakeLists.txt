@@ -396,7 +396,6 @@ list(APPEND SOURCE_FILES
         ## Settings
         displayapp/screens/settings/QuickSettings.cpp
         displayapp/screens/settings/Settings.cpp
-        displayapp/screens/settings/SettingWatchFace.cpp
         displayapp/screens/settings/SettingTimeFormat.cpp
         displayapp/screens/settings/SettingWakeUp.cpp
         displayapp/screens/settings/SettingDisplay.cpp
@@ -412,7 +411,6 @@ list(APPEND SOURCE_FILES
 
         ## The selected ElixirTime watch faces.  Upstream alternatives remain
         ## in the tree for straightforward rebases, but are not built.
-        displayapp/screens/WatchFaceDigital.cpp
         displayapp/screens/WatchFaceTerminal.cpp
 
         ##

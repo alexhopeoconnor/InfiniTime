@@ -21,9 +21,14 @@ void HeartRateController::Update(HeartRateController::States newState, uint8_t h
   }
 }
 
+void HeartRateController::SetMeasurementMode(HeartRateController::MeasurementMode newMode) {
+  measurementMode = newMode;
+}
+
 void HeartRateController::Enable() {
   if (task != nullptr) {
     state = States::NotEnoughData;
+    measurementMode = MeasurementMode::Foreground;
     task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::Enable);
   }
 }
@@ -31,6 +36,7 @@ void HeartRateController::Enable() {
 void HeartRateController::Disable() {
   if (task != nullptr) {
     state = States::Stopped;
+    measurementMode = MeasurementMode::Idle;
     task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::Disable);
   }
 }

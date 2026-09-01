@@ -82,6 +82,7 @@ Hrs3300::PackedHrsAls Hrs3300::ReadHrsAls() {
   auto ret = twiMaster.Read(twiAddress, baseOffset, buf, length);
   if (ret != TwiMaster::ErrorCodes::NoError) {
     NRF_LOG_INFO("READ ERROR");
+    return res;
   }
   // hrs
   uint8_t m = static_cast<uint8_t>(Registers::C0DataM) - baseOffset;
@@ -97,6 +98,7 @@ Hrs3300::PackedHrsAls Hrs3300::ReadHrsAls() {
   h = static_cast<uint8_t>(Registers::C1dataH) - baseOffset;
   l = static_cast<uint8_t>(Registers::C1dataL) - baseOffset;
   res.als = ((buf[h] & 0x3f) << 11) | (buf[m] << 3) | (buf[l] & 0x07);
+  res.valid = true;
 
   return res;
 }
@@ -108,7 +110,7 @@ void Hrs3300::WriteRegister(uint8_t reg, uint8_t data) {
 }
 
 uint8_t Hrs3300::ReadRegister(uint8_t reg) {
-  uint8_t value;
+  uint8_t value = 0;
   auto ret = twiMaster.Read(twiAddress, reg, &value, 1);
   if (ret != TwiMaster::ErrorCodes::NoError)
     NRF_LOG_INFO("READ ERROR");

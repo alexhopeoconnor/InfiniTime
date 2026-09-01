@@ -29,7 +29,8 @@ namespace Pinetime {
       private:
         Controllers::HeartRateController& heartRateController;
         Pinetime::System::WakeLock wakeLock;
-        void UpdateStartStopButton(bool isRunning);
+        void UpdateMeasurementUi();
+        void UpdateStartStopButton(bool isForegroundMeasurement);
         lv_obj_t* label_hr;
         lv_obj_t* label_bpm;
         lv_obj_t* label_status;

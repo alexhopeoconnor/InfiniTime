@@ -4,16 +4,19 @@ ElixirTime is the deliberately small PineTime firmware on the
 `firmware/elixir-time` branch. It is based on the upstream InfiniTime `1.16.1`
 tag, with `upstream` kept as the official repository remote.
 
-The device continues to advertise as `InfiniTime`. This is intentional: it
-keeps established phone compatibility and avoids treating a cosmetic project
-name as a new BLE product. The Terminal watch face identifies the customised
-firmware as `elixir@time`.
+The device continues to use the established InfiniTime BLE device identity for
+phone compatibility. Its standard Device Information **software revision** is
+`ElixirTime`, while its firmware revision is `1.16.2`; the Terminal watch face
+identifies the customised firmware as `elixir@time`. These independent,
+visible identifiers make a successful custom flash distinguishable from an
+upstream `1.16.1` image.
 
 ## Product choices
 
 ElixirTime builds these user-facing features:
 
-- Terminal and Digital watch faces (Terminal first in the selector).
+- The Terminal watch face only. Existing settings may name an upstream face,
+  but the app safely falls back to Terminal without rewriting persisted data.
 - Alarm, timer, stopwatch, steps, and the heart-rate screen.
 - Notifications, time synchronisation, standard OTA DFU, the file service,
   flashlight, battery information, firmware validation, and all core settings.
@@ -47,9 +50,20 @@ recent verified reading is retained and classified as:
 This is a display/data-quality improvement, not a claim of clinical accuracy.
 The PPG implementation already averages consecutive valid spectra. ElixirTime
 arms a selected background interval immediately at boot or when it changes in
-Settings; it no longer needs a manually started initial measurement. `Start`
-in the heart-rate app remains the way to request an immediate foreground
-measurement.
+Settings; it no longer needs a manually started initial measurement. The
+heart-rate screen labels a scheduled acquisition as an **Auto sample** and
+does not hold the display awake; `Measure now` requests an immediate,
+screen-on foreground measurement instead.
+
+The screen reports the acquisition condition rather than calling every failure
+"not enough data": it distinguishes initial acquisition, unstable optical
+signal, excessive ambient light, and an HRS3300 communication failure. A
+scheduled sample has a 30-second attempt window. Intervals longer than that
+retain their start-to-start cadence; a failed 30-second sample waits for the
+next interval instead of restarting continuously. `Cont` deliberately keeps
+sampling until it is changed to another option or Off. The firmware retains
+only the latest verified value and its age; it does **not** yet maintain a
+heart-rate history.
 
 ## First upgrade and recovery checklist
 
@@ -76,9 +90,15 @@ are true:
 3. The phone/desktop DFU client can see the watch and has enough battery.
 4. A recovery route is available if the app does not boot.
 
-The included charging cable supplies power only; it is not a USB data or SWD
-debug connection. Physical recovery/debugging needs suitable SWD pogo pins
-and a compatible programmer; see [SWD](SWD.md).
+The included charging cable supplies power only; it is not a USB data, serial,
+or SWD debug connection. The daily firmware deliberately leaves the RTT log
+backend disabled, so there is no cable-based serial diagnostic channel.
+Physical recovery/debugging needs suitable SWD pogo pins and a compatible
+programmer; [Pine64's devkit wiring guide](https://wiki.pine64.org/wiki/PineTime_Devkit_Wiring)
+documents the GND, SWDIO, and SWDCLK connections and warns not to connect a
+debugger supply while the battery is attached. A separate SWD/RTT debug build
+is the appropriate future route for raw sensor logs; the on-watch acquisition
+states above are the safe diagnostic aid in normal firmware. See [SWD](SWD.md).
 
 ## Desktop diagnostics and companion boundaries
 
@@ -142,15 +162,12 @@ itctl watch steps --json
 state. Do not use ITD's firmware-upgrade, resource-loading, filesystem-write,
 notification, or weather commands for ElixirTime maintenance.
 
-For OTA, use the controlled legacy application-DFU route described above, not
-`itctl firmware upgrade`. It must be run from an isolated Python environment
-with BlueZ `gatttool`, `pexpect`, and `intelhex`, after a read-only connection
-and service-discovery preflight. The DFU archive must be the exact checked
-application artifact; wait for validation and activation/reset, then confirm
-the running version. The checkout contains the legacy controller under
-`bootloader/ota-dfu-python/`; the successful ElixirTime flash used a
-disposable copy with longer connection/discovery timeouts, so revalidate the
-tool before relying on it in a new host environment.
+For OTA, use the phone's existing Gadgetbridge installation, not `itctl
+firmware upgrade` and not the vendored Python legacy controller. The latter
+uses an unreliable `gatttool` transport and is retained only as upstream
+reference source, not as an ElixirTime tool. Select the exact checked
+application archive in Gadgetbridge, wait for the reboot, verify the
+ElixirTime identity, and then validate it on the watch.
 
 ## Building and maintaining
 
@@ -171,10 +188,12 @@ workflow for manual dispatch. The LittleFS target disables debug logging
 because the pinned LittleFS debug trace has more formatting arguments than the
 nRF5 SDK logger; this affects diagnostics only, not file-system behaviour.
 
-The companion InfiniSim build is also required after display changes. It
-compiles the complete upstream source tree, which catches integration errors in
-the surviving Terminal, Digital, and heart-rate screens even though production
-ElixirTime deliberately builds a smaller target.
+InfiniSim is deliberately not part of the ElixirTime release process. It
+requires additional desktop dependencies and offers primarily interactive UI
+testing; it does not test the HRS3300, BLE radio, bootloader, or OTA transport.
+The mandatory release checks are the reproducible application/recovery builds
+and the deterministic package verification described in
+[`scripts/elixir-release-verify.sh`](../scripts/elixir-release-verify.sh).
 
 To bring in a later upstream release, create a temporary maintenance branch,
 merge or rebase onto the desired upstream tag, build both targets, inspect the

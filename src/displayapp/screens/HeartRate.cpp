@@ -9,15 +9,23 @@
 using namespace Pinetime::Applications::Screens;
 
 namespace {
-  const char* ToString(Pinetime::Controllers::HeartRateController::States s) {
-    switch (s) {
-      case Pinetime::Controllers::HeartRateController::States::NotEnoughData:
-        return "Not enough data,\nplease wait...";
-      case Pinetime::Controllers::HeartRateController::States::NoTouch:
-        return "No touch detected";
-      case Pinetime::Controllers::HeartRateController::States::Running:
-        return "Measuring...";
-      case Pinetime::Controllers::HeartRateController::States::Stopped:
+  const char* ToString(Pinetime::Applications::HeartRateAcquisitionStatus status,
+                       Pinetime::Applications::HeartRateMeasurementMode measurementMode) {
+    const bool isBackgroundSample = measurementMode == Pinetime::Applications::HeartRateMeasurementMode::Background;
+    switch (status) {
+      case Pinetime::Applications::HeartRateAcquisitionStatus::Acquiring:
+        return isBackgroundSample ? "Auto sample:\nacquiring signal" : "Acquiring signal...\nhold still";
+      case Pinetime::Applications::HeartRateAcquisitionStatus::NoTouch:
+        return "No skin contact\non sensor";
+      case Pinetime::Applications::HeartRateAcquisitionStatus::SignalUnstable:
+        return "Signal unstable\nhold still / tighten strap";
+      case Pinetime::Applications::HeartRateAcquisitionStatus::AmbientLight:
+        return "Too much light\ncover the sensor";
+      case Pinetime::Applications::HeartRateAcquisitionStatus::SensorError:
+        return "Sensor communication\nfailed";
+      case Pinetime::Applications::HeartRateAcquisitionStatus::Running:
+        return isBackgroundSample ? "Auto sample active" : "Measuring...";
+      case Pinetime::Applications::HeartRateAcquisitionStatus::Stopped:
         return "Stopped";
     }
     return "";
@@ -31,16 +39,11 @@ namespace {
 
 HeartRate::HeartRate(Controllers::HeartRateController& heartRateController, System::SystemTask& systemTask)
   : heartRateController {heartRateController}, wakeLock(systemTask) {
-  bool isHrRunning = heartRateController.State() != Controllers::HeartRateController::States::Stopped;
   label_hr = lv_label_create(lv_scr_act(), nullptr);
 
   lv_obj_set_style_local_text_font(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_76);
 
-  if (isHrRunning) {
-    lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::highlight);
-  } else {
-    lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
-  }
+  lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
 
   lv_label_set_text_static(label_hr, "---");
   lv_obj_align(label_hr, nullptr, LV_ALIGN_CENTER, 0, -40);
@@ -51,7 +54,7 @@ HeartRate::HeartRate(Controllers::HeartRateController& heartRateController, Syst
 
   label_status = lv_label_create(lv_scr_act(), nullptr);
   lv_obj_set_style_local_text_color(label_status, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, LV_COLOR_GRAY);
-  lv_label_set_text_static(label_status, ToString(Pinetime::Controllers::HeartRateController::States::NotEnoughData));
+  lv_label_set_text_static(label_status, "Stopped");
 
   lv_obj_align(label_status, label_hr, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 
@@ -62,10 +65,7 @@ HeartRate::HeartRate(Controllers::HeartRateController& heartRateController, Syst
   lv_obj_align(btn_startStop, nullptr, LV_ALIGN_IN_BOTTOM_MID, 0, 0);
 
   label_startStop = lv_label_create(btn_startStop, nullptr);
-  UpdateStartStopButton(isHrRunning);
-  if (isHrRunning) {
-    wakeLock.Lock();
-  }
+  UpdateMeasurementUi();
 
   taskRefresh = lv_task_create(RefreshTaskCallback, 100, LV_TASK_PRIO_MID, this);
 }
@@ -77,7 +77,8 @@ HeartRate::~HeartRate() {
 
 void HeartRate::Refresh() {
 
-  auto state = heartRateController.State();
+  const auto acquisitionStatus = Pinetime::Applications::GetHeartRateAcquisitionStatus(heartRateController);
+  const auto measurementMode = Pinetime::Applications::GetHeartRateMeasurementMode(heartRateController);
   const auto now = xTaskGetTickCount();
   const auto readingStatus = Pinetime::Applications::GetHeartRateReadingStatus(heartRateController, now);
 
@@ -92,31 +93,41 @@ void HeartRate::Refresh() {
                           "Signal lost\nlast good reading %lus ago",
                           Pinetime::Applications::LastHeartRateAgeSeconds(heartRateController, now));
   } else {
-    lv_label_set_text_static(label_status, ToString(state));
+    lv_label_set_text_static(label_status, ToString(acquisitionStatus, measurementMode));
   }
+  UpdateMeasurementUi();
   lv_obj_align(label_status, label_hr, LV_ALIGN_OUT_BOTTOM_MID, 0, 10);
 }
 
 void HeartRate::OnStartStopEvent(lv_event_t event) {
   if (event == LV_EVENT_CLICKED) {
-    if (heartRateController.State() == Controllers::HeartRateController::States::Stopped) {
+    if (Pinetime::Applications::GetHeartRateMeasurementMode(heartRateController) !=
+        Pinetime::Applications::HeartRateMeasurementMode::Foreground) {
       heartRateController.Enable();
-      UpdateStartStopButton(heartRateController.State() != Controllers::HeartRateController::States::Stopped);
-      wakeLock.Lock();
-      lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::highlight);
     } else {
       heartRateController.Disable();
-      UpdateStartStopButton(heartRateController.State() != Controllers::HeartRateController::States::Stopped);
-      wakeLock.Release();
-      lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
     }
+    UpdateMeasurementUi();
   }
 }
 
-void HeartRate::UpdateStartStopButton(bool isRunning) {
-  if (isRunning) {
+void HeartRate::UpdateMeasurementUi() {
+  const bool isForegroundMeasurement = Pinetime::Applications::GetHeartRateMeasurementMode(heartRateController) ==
+                                       Pinetime::Applications::HeartRateMeasurementMode::Foreground;
+  UpdateStartStopButton(isForegroundMeasurement);
+  if (isForegroundMeasurement) {
+    wakeLock.Lock();
+    lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::highlight);
+  } else {
+    wakeLock.Release();
+    lv_obj_set_style_local_text_color(label_hr, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
+  }
+}
+
+void HeartRate::UpdateStartStopButton(bool isForegroundMeasurement) {
+  if (isForegroundMeasurement) {
     lv_label_set_text_static(label_startStop, "Stop");
   } else {
-    lv_label_set_text_static(label_startStop, "Start");
+    lv_label_set_text_static(label_startStop, "Measure now");
   }
 }

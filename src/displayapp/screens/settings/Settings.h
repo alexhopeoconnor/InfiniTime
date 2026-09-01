@@ -35,7 +35,6 @@ namespace Pinetime {
           {Symbols::sun, "Display", Apps::SettingDisplay},
           {Symbols::eye, "Wake Up", Apps::SettingWakeUp},
           {Symbols::clock, "Time format", Apps::SettingTimeFormat},
-          {Symbols::home, "Watch face", Apps::SettingWatchFace},
 
           {Symbols::shoe, "Steps", Apps::SettingSteps},
           {Symbols::heartBeat, "Heartrate", Apps::SettingHeartRate},

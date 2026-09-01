@@ -5,7 +5,7 @@
 Work on `firmware/elixir-time`, whose base is upstream InfiniTime `1.16.1`.
 The current product priorities are, in order:
 
-1. The visual design and usability of the Terminal/ElixirTime watch face.
+1. The visual design and usability of the Terminal watch face.
 2. Honest, understandable heart-rate behaviour on the existing HRS3300
    hardware.
 3. Regression-free core watch features: time, alarms/timer/stopwatch, steps,
@@ -94,29 +94,26 @@ requested. Do not use `itctl firmware upgrade`, `itctl resources`, mutating
 
 ## Approved OTA update discipline
 
-ITD is not the approved flasher. The known-good route is a normal,
-application-only legacy BLE DFU using the generated
-`build/output/pinetime-mcuboot-app-dfu-<version>.zip` archive and the Python
-legacy controller in `bootloader/ota-dfu-python/`, run from an isolated virtual
-environment with BlueZ `gatttool`, `pexpect`, and `intelhex` available.
-
-The successful ElixirTime session used a disposable copy of that controller
-with longer scan and GATT-discovery timeouts. Do not assume the vendored copy
-or a global Python installation is ready: first perform a read-only
-connect/discovery preflight against the current watch. Do not modify the
-controller or flash merely to test it.
+ITD is not the approved flasher. Use the phone's existing Gadgetbridge
+installation for normal, application-only OTA. Do not use the vendored Python
+legacy controller or a hand-modified copy of it: its `gatttool` transport is
+not a reliable ElixirTime maintenance path and can report a failed transfer
+poorly.
 
 Before an OTA, all of the following are mandatory:
 
-1. Build and validate both application and recovery targets, including
-   InfiniSim after display changes.
+1. Build and validate both application and recovery targets. InfiniSim is not
+   a required check: it is intentionally outside this project's toolchain.
 2. Record and verify the SHA-256 of the exact application DFU archive.
 3. Keep a known-good upstream application DFU archive available for rollback.
 4. On the watch, enable `Settings -> Over-the-air -> Firmware & files`.
 5. Confirm sufficient battery, an exclusive BLE connection, and a recovery
    route.
-6. Read the DFU output through validation and activation/reset, then verify
-   the running firmware before any further change.
+6. In Gadgetbridge, choose only the generated application DFU archive and
+   wait for its success indication and the watch reboot. Verify the
+   ElixirTime identity before any further change.
+7. On the watch, open `Settings -> Firmware` and validate only after the
+   Terminal face and core smoke checks succeed.
 
 Never flash a bootloader, recovery image, resource package, or arbitrary
 archive as part of normal ElixirTime iteration. Physical recovery requires SWD

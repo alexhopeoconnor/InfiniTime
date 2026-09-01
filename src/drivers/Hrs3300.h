@@ -22,8 +22,9 @@ namespace Pinetime {
       };
 
       struct PackedHrsAls {
-        uint16_t hrs;
-        uint16_t als;
+        uint16_t hrs = 0;
+        uint16_t als = 0;
+        bool valid = false;
       };
 
       Hrs3300(TwiMaster& twiMaster, uint8_t twiAddress);

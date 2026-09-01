@@ -129,6 +129,10 @@ void HeartRateTask::Work() {
             break;
           }
           if (state == States::ForegroundMeasuring) {
+            // A manual measurement belongs to the visible Heart Rate screen.
+            // Screen sleep ends that request; a configured interval remains
+            // independently armed for later background work.
+            manualMeasurementRequested = false;
             if (BackgroundMeasurementNeeded()) {
               newState = States::BackgroundMeasuring;
             } else {
@@ -196,6 +200,7 @@ void HeartRateTask::Work() {
       StopMeasurement();
     }
     state = newState;
+    UpdateMeasurementMode();
 
     if (state == States::ForegroundMeasuring || state == States::BackgroundMeasuring) {
       HandleSensorData();
@@ -227,8 +232,33 @@ void HeartRateTask::StopMeasurement() {
   controller.Update(Controllers::HeartRateController::States::Stopped, 0);
 }
 
+void HeartRateTask::UpdateMeasurementMode() {
+  switch (state) {
+    case States::BackgroundMeasuring:
+      controller.SetMeasurementMode(Controllers::HeartRateController::MeasurementMode::Background);
+      break;
+    case States::ForegroundMeasuring:
+      controller.SetMeasurementMode(Controllers::HeartRateController::MeasurementMode::Foreground);
+      break;
+    case States::Disabled:
+    case States::Waiting:
+      controller.SetMeasurementMode(Controllers::HeartRateController::MeasurementMode::Idle);
+      break;
+  }
+}
+
 void HeartRateTask::HandleSensorData() {
   auto sensorData = heartRateSensor.ReadHrsAls();
+  if (!sensorData.valid) {
+    // A failed I2C read is not a PPG sample. Do not feed arbitrary bytes to
+    // the estimator or replace a verified previous reading with a fake zero.
+    ppg.Reset(true);
+    controller.Update(Controllers::HeartRateController::States::SensorError, 0);
+    valueCurrentlyShown = false;
+    HandleMeasurementTimeout(false);
+    return;
+  }
+
   int8_t ambient = ppg.Preprocess(sensorData.hrs, sensorData.als);
   int bpm = ppg.HeartRate();
 
@@ -236,18 +266,19 @@ void HeartRateTask::HandleSensorData() {
   if (ambient > 0) {
     // Reset all DAQ buffers
     ppg.Reset(true);
-    controller.Update(Controllers::HeartRateController::States::NotEnoughData, bpm);
-    bpm = 0;
+    controller.Update(Controllers::HeartRateController::States::AmbientLight, 0);
     valueCurrentlyShown = false;
+    HandleMeasurementTimeout(false);
+    return;
   }
 
   // Reset requested, or not enough data
   if (bpm == -1) {
     // Reset all DAQ buffers except HRS buffer
     ppg.Reset(false);
-    // Set HR to zero and update
-    bpm = 0;
-    controller.Update(Controllers::HeartRateController::States::Running, bpm);
+    // The spectrum was not usable. Preserve any previous verified reading
+    // while making the acquisition failure visible to the user.
+    controller.Update(Controllers::HeartRateController::States::SignalUnstable, 0);
     valueCurrentlyShown = false;
   } else if (bpm == -2) {
     // Not enough data
@@ -272,24 +303,35 @@ void HeartRateTask::HandleSensorData() {
     controller.Update(Controllers::HeartRateController::States::Running, bpm);
     return;
   }
-  // If been measuring for longer than the time limit, set the last measurement time
+  HandleMeasurementTimeout(true);
+}
+
+void HeartRateTask::HandleMeasurementTimeout(bool reportSignalFailure) {
+  // If been measuring for longer than the time limit, set the last measurement time.
   // This allows giving up on background measurement after a while
   // and also means that background measurement won't begin immediately after
   // an unsuccessful long foreground measurement
-  if (xTaskGetTickCount() - measurementStartTime > backgroundMeasurementTimeLimit) {
+  const auto now = xTaskGetTickCount();
+  if (now - measurementStartTime >= backgroundMeasurementTimeLimit) {
     // When measuring, propagate failure if no value within the time limit
     // Prevents stale heart rates from being displayed for >1 background period
     // Or more than the time limit after switching to screen on (where the last background measurement was successful)
     // Note: Once a successful measurement is recorded in screen on it will never be cleared
     // without some other state change e.g. ambient light reset
-    if (!measurementSucceeded) {
-      controller.Update(Controllers::HeartRateController::States::Running, 0);
+    if (!measurementSucceeded && reportSignalFailure) {
+      controller.Update(Controllers::HeartRateController::States::SignalUnstable, 0);
       valueCurrentlyShown = false;
     }
     if (state == States::BackgroundMeasuring) {
-      lastMeasurementTime = xTaskGetTickCount() - backgroundMeasurementTimeLimit;
+      const auto backgroundPeriod = BackgroundMeasurementInterval();
+      // Preserve start-to-start cadence for intervals longer than one sample
+      // window. At 30 seconds (or Continuous), using the original start time
+      // would make a failed sample immediately restart forever.
+      lastMeasurementTime = backgroundPeriod.has_value() && backgroundPeriod.value() > backgroundMeasurementTimeLimit
+                              ? measurementStartTime
+                              : now;
     } else {
-      lastMeasurementTime = xTaskGetTickCount();
+      lastMeasurementTime = now;
     }
   }
 }

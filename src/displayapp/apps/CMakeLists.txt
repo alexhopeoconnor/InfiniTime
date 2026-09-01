@@ -15,13 +15,16 @@ else ()
 endif ()
 
 if(DEFINED ENABLE_WATCHFACES)
-    set(WATCHFACE_TYPES ${ENABLE_WATCHFACES} CACHE STRING "List of watch faces to build into the firmware")
+    set(WATCHFACE_TYPES ${ENABLE_WATCHFACES} CACHE STRING "List of watch faces to build into the firmware" FORCE)
 else()
+    # ElixirTime intentionally ships one face. Existing installations may
+    # retain another upstream value in settings.dat; DisplayApp safely falls
+    # back to this first (and only) compiled face without changing that
+    # compatibility data.
     set(DEFAULT_WATCHFACE_TYPES "WatchFace::Terminal")
-    # Digital is the watch's existing saved preference and provides a simple
-    # fallback while the Terminal face evolves.
-    set(DEFAULT_WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}, WatchFace::Digital")
-    set(WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}" CACHE STRING "List of watch faces to build into the firmware")
+    # FORCE is intentional: a previous build directory must not keep an old
+    # face set after the product registry changed.
+    set(WATCHFACE_TYPES "${DEFAULT_WATCHFACE_TYPES}" CACHE STRING "List of watch faces to build into the firmware" FORCE)
 endif()
 
 add_library(infinitime_apps INTERFACE)

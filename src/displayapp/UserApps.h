@@ -6,7 +6,6 @@
 #include "displayapp/screens/Timer.h"
 #include "displayapp/screens/Tile.h"
 #include "displayapp/screens/ApplicationList.h"
-#include "displayapp/screens/WatchFaceDigital.h"
 #include "displayapp/screens/WatchFaceTerminal.h"
 
 namespace Pinetime {

@@ -30,7 +30,6 @@
 
 #include "displayapp/screens/settings/QuickSettings.h"
 #include "displayapp/screens/settings/Settings.h"
-#include "displayapp/screens/settings/SettingWatchFace.h"
 #include "displayapp/screens/settings/SettingTimeFormat.h"
 #include "displayapp/screens/settings/SettingWakeUp.h"
 #include "displayapp/screens/settings/SettingDisplay.h"
@@ -581,15 +580,6 @@ void DisplayApp::LoadScreen(Apps app, DisplayApp::FullRefreshDirections directio
     case Apps::Settings:
       currentScreen = std::make_unique<Screens::Settings>(this, settingsController);
       break;
-    case Apps::SettingWatchFace: {
-      std::array<Screens::SettingWatchFace::Item, UserWatchFaceTypes::Count> items;
-      std::ranges::transform(userWatchFaces, items.begin(), [this](const WatchFaceDescription& userWatchFace) {
-        return Screens::SettingWatchFace::Item {userWatchFace.name,
-                                                userWatchFace.watchFace,
-                                                userWatchFace.isAvailable(controllers.filesystem)};
-      });
-      currentScreen = std::make_unique<Screens::SettingWatchFace>(this, std::move(items), settingsController, filesystem);
-    } break;
     case Apps::SettingTimeFormat:
       currentScreen = std::make_unique<Screens::SettingTimeFormat>(settingsController);
       break;
