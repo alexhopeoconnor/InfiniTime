@@ -6,7 +6,7 @@ tag, with `upstream` kept as the official repository remote.
 
 The device continues to use the established InfiniTime BLE device identity for
 phone compatibility. Its standard Device Information **software revision** is
-`ElixirTime`, while its firmware revision is `1.16.6`; the Terminal watch face
+`ElixirTime`, while its firmware revision is `1.16.7`; the Terminal watch face
 identifies the customised firmware as `elixir@time`. These independent,
 visible identifiers make a successful custom flash distinguishable from an
 upstream `1.16.1` image.
