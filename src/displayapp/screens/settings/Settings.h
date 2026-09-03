@@ -37,7 +37,7 @@ namespace Pinetime {
           {Symbols::clock, "Time format", Apps::SettingTimeFormat},
 
           {Symbols::shoe, "Steps", Apps::SettingSteps},
-          {Symbols::heartBeat, "Heartrate", Apps::SettingHeartRate},
+          {Symbols::heartBeat, "Heart rate", Apps::SettingHeartRate},
           {Symbols::clock, "Date & Time", Apps::SettingSetDateTime},
           {Symbols::batteryHalf, "Battery", Apps::BatteryInfo},
 

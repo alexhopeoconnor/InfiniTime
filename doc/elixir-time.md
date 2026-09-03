@@ -6,7 +6,7 @@ tag, with `upstream` kept as the official repository remote.
 
 The device continues to use the established InfiniTime BLE device identity for
 phone compatibility. Its standard Device Information **software revision** is
-`ElixirTime`, while its firmware revision is `1.16.2`; the Terminal watch face
+`ElixirTime`, while its firmware revision is `1.16.6`; the Terminal watch face
 identifies the customised firmware as `elixir@time`. These independent,
 visible identifiers make a successful custom flash distinguishable from an
 upstream `1.16.1` image.
@@ -17,7 +17,8 @@ ElixirTime builds these user-facing features:
 
 - The Terminal watch face only. Existing settings may name an upstream face,
   but the app safely falls back to Terminal without rewriting persisted data.
-- Alarm, timer, stopwatch, steps, and the heart-rate screen.
+- Alarm, timer, stopwatch, steps, and background heart-rate sampling managed
+  from Settings.
 - Notifications, time synchronisation, standard OTA DFU, the file service,
   flashlight, battery information, firmware validation, and all core settings.
 
@@ -50,20 +51,34 @@ recent verified reading is retained and classified as:
 This is a display/data-quality improvement, not a claim of clinical accuracy.
 The PPG implementation already averages consecutive valid spectra. ElixirTime
 arms a selected background interval immediately at boot or when it changes in
-Settings; it no longer needs a manually started initial measurement. The
-heart-rate screen labels a scheduled acquisition as an **Auto sample** and
-does not hold the display awake; `Measure now` requests an immediate,
-screen-on foreground measurement instead.
+Settings; it no longer needs a manually started initial measurement. `Settings
+-> Heart rate` is the sole control surface: choose a sampling interval, `Live`,
+or `Off (hide)`. The latter stops automatic sampling and removes the heart-rate
+row from the Terminal face. There is no foreground heart-rate app or manual
+start action.
+
+Heart-rate acquisition is suspended whenever external power is present. This
+uses the cradle-presence signal rather than the transient charging-current
+signal, so it remains disabled after the battery reaches 100%. Docking stops
+an active acquisition immediately; undocking begins a fresh configured
+interval. While docked, the Terminal face shows `heart dock` instead of a
+current or stale reading.
 
 The screen reports the acquisition condition rather than calling every failure
 "not enough data": it distinguishes initial acquisition, unstable optical
 signal, excessive ambient light, and an HRS3300 communication failure. A
 scheduled sample has a 30-second attempt window. Intervals longer than that
 retain their start-to-start cadence; a failed 30-second sample waits for the
-next interval instead of restarting continuously. `Cont` deliberately keeps
+next interval instead of restarting continuously. `Live` deliberately keeps
 sampling until it is changed to another option or Off. The firmware retains
 only the latest verified value and its age; it does **not** yet maintain a
 heart-rate history.
+
+The Terminal face uses the built-in compact icon glyphs rather than long
+`[LABEL]` prefixes. Its single top prompt and abbreviated status rows reserve
+several display lines for future watch-local information. No Home Assistant
+mode or multi-press button gesture is implemented yet: those need a defined
+on-watch state model and remain outside the current firmware scope.
 
 ## First upgrade and recovery checklist
 
@@ -191,7 +206,10 @@ The current known-good workflow is:
 itd_root=/home/alex/Documents/Projects/public/embedded/itd
 itd_run=/tmp/elixir-itd
 itd_cfg=/tmp/elixir-itd-config
-archive="/home/alex/Documents/Projects/public/embedded/InfiniTime/build/output/pinetime-mcuboot-app-dfu-1.16.2.zip"
+# Use the same build directory passed as BUILD_DIR to the container build.
+version="$(sed -nE 's/^project\(pinetime VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)"
+build_dir="$PWD/build/ui-${version}"
+archive="$build_dir/src/pinetime-mcuboot-app-dfu-${version}.zip"
 
 mkdir -p "$itd_run" "$itd_cfg/itd"
 cp doc/itd-dfu-only.toml "$itd_cfg/itd/itd.toml"

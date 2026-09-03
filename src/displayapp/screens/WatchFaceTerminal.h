@@ -45,6 +45,7 @@ namespace Pinetime {
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>> currentDateTime {};
         Utility::DirtyValue<uint32_t> stepCount {};
         Utility::DirtyValue<uint8_t> heartbeat {};
+        Utility::DirtyValue<bool> heartRateEnabled {};
         Utility::DirtyValue<bool> heartbeatRunning {};
         Utility::DirtyValue<uint32_t> heartRateAgeSeconds {};
         HeartRateReadingStatus lastHeartRateStatus = HeartRateReadingStatus::Unavailable;
@@ -60,7 +61,6 @@ namespace Pinetime {
         lv_obj_t* stepValue;
         lv_obj_t* heartbeatValue;
         lv_obj_t* connectState;
-        lv_obj_t* labelPrompt2;
 
         Controllers::DateTime& dateTimeController;
         const Controllers::Battery& batteryController;

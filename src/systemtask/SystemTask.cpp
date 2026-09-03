@@ -144,6 +144,8 @@ void SystemTask::Work() {
 
   heartRateSensor.Init();
   heartRateSensor.Disable();
+  // Establish the cradle state before the HR task can arm a Live interval.
+  batteryController.ReadPowerState();
   heartRateApp.Start();
 
   buttonHandler.Init(this);
@@ -351,6 +353,7 @@ void SystemTask::Work() {
           break;
         case Messages::OnChargingEvent:
           batteryController.ReadPowerState();
+          heartRateApp.PushMessage(Pinetime::Applications::HeartRateTask::Messages::PowerStateChanged);
           GoToRunning();
           break;
         case Messages::MeasureBatteryTimerExpired:

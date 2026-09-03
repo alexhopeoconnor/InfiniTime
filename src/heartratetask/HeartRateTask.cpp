@@ -1,5 +1,6 @@
 #include "heartratetask/HeartRateTask.h"
 #include <drivers/Hrs3300.h>
+#include <components/battery/BatteryController.h>
 #include <components/heartrate/HeartRateController.h>
 #include <limits>
 
@@ -20,6 +21,12 @@ std::optional<TickType_t> HeartRateTask::BackgroundMeasurementInterval() const {
 }
 
 bool HeartRateTask::BackgroundMeasurementNeeded() const {
+  // The optical sensor cannot obtain a useful wrist signal on the charging
+  // cradle. More importantly, a configured interval must not keep its LED on
+  // while the watch is docked, including once the battery reports full.
+  if (battery.IsPowerPresent()) {
+    return false;
+  }
   auto backgroundPeriod = BackgroundMeasurementInterval();
   if (!backgroundPeriod.has_value()) {
     return false;
@@ -65,6 +72,11 @@ TickType_t HeartRateTask::CurrentTaskDelay() {
     case States::Disabled:
       return portMAX_DELAY;
     case States::Waiting:
+      // A power-state event wakes this task when the watch is removed from
+      // the cradle. Do not poll or leave the HRS3300 enabled while docked.
+      if (battery.IsPowerPresent()) {
+        return portMAX_DELAY;
+      }
       // Sleep until a new event if background measuring disabled
       if (!backgroundPeriod.has_value()) {
         return portMAX_DELAY;
@@ -86,8 +98,9 @@ TickType_t HeartRateTask::CurrentTaskDelay() {
 
 HeartRateTask::HeartRateTask(Drivers::Hrs3300& heartRateSensor,
                              Controllers::HeartRateController& controller,
-                             Controllers::Settings& settings)
-  : heartRateSensor {heartRateSensor}, controller {controller}, settings {settings} {
+                             Controllers::Settings& settings,
+                             const Controllers::Battery& battery)
+  : heartRateSensor {heartRateSensor}, controller {controller}, settings {settings}, battery {battery} {
 }
 
 void HeartRateTask::Start() {
@@ -112,7 +125,7 @@ void HeartRateTask::Work() {
 
   // A selected interval is an autonomous schedule. It must not require a
   // hidden first press of Start in the Heart Rate app.
-  if (BackgroundMeasurementInterval().has_value()) {
+  if (BackgroundMeasurementInterval().has_value() && !battery.IsPowerPresent()) {
     state = States::Waiting;
   }
 
@@ -147,16 +160,16 @@ void HeartRateTask::Work() {
           }
           // A scheduled sample must not turn into continuous foreground
           // sampling whenever the screen wakes. Only a manual Start does so.
-          if (manualMeasurementRequested) {
+          if (manualMeasurementRequested && !battery.IsPowerPresent()) {
             newState = States::ForegroundMeasuring;
           }
           break;
         case Messages::Enable:
-          // Can only be enabled when the screen is on
-          // If this constraint is somehow violated, the unexpected state
-          // will self-resolve at the next screen on event
-          manualMeasurementRequested = true;
-          newState = States::ForegroundMeasuring;
+          // The standalone HR screen is excluded in ElixirTime, but retain
+          // this guard for upstream callers and BLE paths: no optical sample
+          // is allowed while external power is present.
+          manualMeasurementRequested = !battery.IsPowerPresent();
+          newState = manualMeasurementRequested ? States::ForegroundMeasuring : States::Disabled;
           valueCurrentlyShown = false;
           break;
         case Messages::Disable:
@@ -172,7 +185,10 @@ void HeartRateTask::Work() {
           }
           break;
         case Messages::BackgroundSettingsChanged:
-          if (BackgroundMeasurementInterval().has_value()) {
+          if (battery.IsPowerPresent()) {
+            manualMeasurementRequested = false;
+            newState = States::Disabled;
+          } else if (BackgroundMeasurementInterval().has_value()) {
             // Apply Off -> interval immediately, but let a new schedule wait
             // one full period before its first background sample.
             if (state == States::Disabled && !manualMeasurementRequested) {
@@ -183,7 +199,29 @@ void HeartRateTask::Work() {
             newState = States::Disabled;
           }
           break;
+        case Messages::PowerStateChanged:
+          if (battery.IsPowerPresent()) {
+            // Stop immediately on dock. A selected interval remains in
+            // Settings but is intentionally suspended, not cleared.
+            manualMeasurementRequested = false;
+            newState = States::Disabled;
+          } else if (BackgroundMeasurementInterval().has_value()) {
+            // Begin a fresh interval after undocking; do not burn a sample
+            // immediately because the previous deadline elapsed on the dock.
+            lastMeasurementTime = xTaskGetTickCount();
+            newState = States::Waiting;
+          } else {
+            newState = States::Disabled;
+          }
+          break;
       }
+    }
+    // Defend against a power transition racing the scheduler message. The
+    // normal PowerStateChanged path above wakes an idle task immediately.
+    if (battery.IsPowerPresent() &&
+        (newState == States::ForegroundMeasuring || newState == States::BackgroundMeasuring)) {
+      manualMeasurementRequested = false;
+      newState = States::Disabled;
     }
     if (newState == States::Waiting && BackgroundMeasurementNeeded()) {
       newState = States::BackgroundMeasuring;

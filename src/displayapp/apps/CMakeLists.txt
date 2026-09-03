@@ -10,8 +10,10 @@ else ()
     set(DEFAULT_USER_APP_TYPES "${DEFAULT_USER_APP_TYPES}, Apps::Alarm")
     set(DEFAULT_USER_APP_TYPES "${DEFAULT_USER_APP_TYPES}, Apps::Timer")
     set(DEFAULT_USER_APP_TYPES "${DEFAULT_USER_APP_TYPES}, Apps::Steps")
-    set(DEFAULT_USER_APP_TYPES "${DEFAULT_USER_APP_TYPES}, Apps::HeartRate")
-    set(USERAPP_TYPES "${DEFAULT_USER_APP_TYPES}" CACHE STRING "List of user apps to build into the firmware")
+    # Heart-rate behaviour is configured exclusively from Settings. The
+    # Terminal face is its status surface; there is no foreground HR app.
+    # Keep an existing build directory from retaining a removed user app.
+    set(USERAPP_TYPES "${DEFAULT_USER_APP_TYPES}" CACHE STRING "List of user apps to build into the firmware" FORCE)
 endif ()
 
 if(DEFINED ENABLE_WATCHFACES)

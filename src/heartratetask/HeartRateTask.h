@@ -13,17 +13,19 @@ namespace Pinetime {
   }
 
   namespace Controllers {
+    class Battery;
     class HeartRateController;
   }
 
   namespace Applications {
     class HeartRateTask {
     public:
-      enum class Messages : uint8_t { GoToSleep, WakeUp, Enable, Disable, BackgroundSettingsChanged };
+      enum class Messages : uint8_t { GoToSleep, WakeUp, Enable, Disable, BackgroundSettingsChanged, PowerStateChanged };
 
       explicit HeartRateTask(Drivers::Hrs3300& heartRateSensor,
                              Controllers::HeartRateController& controller,
-                             Controllers::Settings& settings);
+                             Controllers::Settings& settings,
+                             const Controllers::Battery& battery);
       void Start();
       void Work();
       void PushMessage(Messages msg);
@@ -51,6 +53,7 @@ namespace Pinetime {
       Drivers::Hrs3300& heartRateSensor;
       Controllers::HeartRateController& controller;
       Controllers::Settings& settings;
+      const Controllers::Battery& battery;
       Controllers::Ppg ppg;
       TickType_t lastMeasurementTime;
       TickType_t measurementStartTime;

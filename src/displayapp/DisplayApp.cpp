@@ -1,6 +1,5 @@
 #include "displayapp/DisplayApp.h"
 #include <libraries/log/nrf_log.h>
-#include "displayapp/screens/HeartRate.h"
 #include "displayapp/screens/Timer.h"
 #include "displayapp/screens/Alarm.h"
 #include "components/battery/BatteryController.h"
