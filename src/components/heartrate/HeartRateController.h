@@ -16,7 +16,17 @@ namespace Pinetime {
   namespace Controllers {
     class HeartRateController {
     public:
-      enum class States : uint8_t { Stopped, NotEnoughData, NoTouch, SignalUnstable, AmbientLight, SensorError, Running };
+      enum class States : uint8_t {
+        Disabled,
+        Stopped,
+        NotEnoughData,
+        Searching,
+        Measuring,
+        NoTouch,
+        SignalUnstable,
+        AmbientLight,
+        SensorError,
+      };
       enum class MeasurementMode : uint8_t { Idle, Background, Foreground };
       enum class ReadingStatus : uint8_t { Unavailable, Fresh, Stale };
 
@@ -24,7 +34,8 @@ namespace Pinetime {
       void Enable();
       void Disable();
       void OnBackgroundSettingsChanged();
-      void Update(States newState, uint8_t heartRate);
+      void UpdateState(States newState);
+      void UpdateHeartRate(uint8_t heartRate);
       void SetMeasurementMode(MeasurementMode newMode);
 
       void SetHeartRateTask(Applications::HeartRateTask* task);
@@ -75,7 +86,7 @@ namespace Pinetime {
 
     private:
       Applications::HeartRateTask* task = nullptr;
-      States state = States::Stopped;
+      States state = States::Disabled;
       MeasurementMode measurementMode = MeasurementMode::Idle;
       uint8_t heartRate = 0;
       bool hasValidHeartRate = false;

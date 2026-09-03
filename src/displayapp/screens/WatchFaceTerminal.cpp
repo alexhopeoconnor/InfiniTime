@@ -132,7 +132,7 @@ void WatchFaceTerminal::Refresh() {
   }
 
   heartbeat = heartRateController.HeartRate();
-  heartbeatRunning = heartRateController.State() != Controllers::HeartRateController::States::Stopped;
+  heartbeatRunning = GetHeartRateMeasurementMode(heartRateController) != HeartRateMeasurementMode::Idle;
   const auto now = xTaskGetTickCount();
   heartRateAgeSeconds = LastHeartRateAgeSeconds(heartRateController, now);
   const auto heartRateStatus = GetHeartRateReadingStatus(heartRateController, now);

@@ -1,0 +1,2 @@
+# The Linux backend uses BlueZ through the mounted system D-Bus socket.
+bleak==0.22.3

@@ -106,6 +106,38 @@ The normal long-term companion is the phone, not this development computer.
 Use a desktop BLE connection only for a short, explicit diagnostic or DFU
 session, and disconnect it afterwards so the phone can reconnect.
 
+### Containerised heart-rate baseline capture
+
+[`scripts/hr-study`](../scripts/hr-study) is a bounded baseline recorder for
+comparing the current firmware with a temporary PPG research build. It records
+only received standard Heart Rate Measurement (`0x2A37`) notifications and
+BlueZ connection events to an ignored local JSONL file. It is neither a
+companion service nor a firmware-control tool: it does not scan, pair, change
+settings, set the watch clock, write files to the watch, or listen on a network
+port.
+
+Its Python environment exists only in a local Docker image. Runtime networking
+is disabled; the container uses the already-paired watch through a mounted
+BlueZ system D-Bus socket, has no Linux capabilities, and disconnects when the
+bounded session ends. Docker's default AppArmor profile blocks that explicitly
+mounted D-Bus use, so the recorder disables only that container profile; it
+does not use privileged mode, host networking, raw HCI access, or host Python.
+See the tool README for its one-command recording and summary workflow. The
+result measures what a normal BLE receiver saw, not a complete measurement
+history: unchanged accepted BPM values may produce no new notification. If the
+watch leaves range, the bounded recorder timestamps the loss and retries the
+existing paired device; it can resume future notifications but cannot backfill
+the missed interval because current firmware exposes no heart-rate history.
+
+The recorder comparison stays inside the same network-disabled Docker image and
+reports BLE link coverage separately from heart-rate events. If a nearby watch
+repeatedly loses the desktop connection, use its short `diagnose-link.sh`
+workflow before changing BlueZ configuration, rebonding, or reflashing. That
+workflow uses the host's native `btmon` to record a local, mode-0600 raw HCI
+trace alongside the bounded recorder. The trace is ignored by Git, can contain
+BLE packet data, requires an existing sudo credential, and is not a companion
+service or a watch write path.
+
 [ITD](https://git.elara.ws/Elara6331/itd) and its `itctl` command are useful
 Linux diagnostics: they can read battery, heart rate, steps, and motion, set
 the clock, and stream heart-rate or step notifications. `itctl` is a client of

@@ -74,6 +74,11 @@ namespace Pinetime::Applications {
   template <typename Controller>
   HeartRateAcquisitionStatus GetHeartRateAcquisitionStatus(const Controller& controller) {
     const auto state = controller.State();
+    if constexpr (requires { Controller::States::Disabled; }) {
+      if (state == Controller::States::Disabled) {
+        return HeartRateAcquisitionStatus::Stopped;
+      }
+    }
     if (state == Controller::States::Stopped) {
       return HeartRateAcquisitionStatus::Stopped;
     }
@@ -82,6 +87,11 @@ namespace Pinetime::Applications {
     }
     if (state == Controller::States::NoTouch) {
       return HeartRateAcquisitionStatus::NoTouch;
+    }
+    if constexpr (requires { Controller::States::Searching; }) {
+      if (state == Controller::States::Searching) {
+        return HeartRateAcquisitionStatus::Acquiring;
+      }
     }
     if constexpr (requires { Controller::States::SignalUnstable; }) {
       if (state == Controller::States::SignalUnstable) {

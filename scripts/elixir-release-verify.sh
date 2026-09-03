@@ -12,8 +12,9 @@ if [[ -z "$version" ]]; then
 fi
 
 archive="${1:-build/output/pinetime-mcuboot-app-dfu-${version}.zip}"
-image="build/output/pinetime-mcuboot-app-image-${version}.bin"
-map_file="build/src/pinetime-mcuboot-app-${version}.map"
+archive_dir="$(dirname "$archive")"
+image="${archive_dir}/pinetime-mcuboot-app-image-${version}.bin"
+map_file="${archive_dir}/pinetime-mcuboot-app-${version}.map"
 
 for required in "$archive" "$image" "$map_file"; do
   if [[ ! -f "$required" ]]; then
