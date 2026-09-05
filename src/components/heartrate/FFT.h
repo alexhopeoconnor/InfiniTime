@@ -1,6 +1,7 @@
 #include <complex>
 #include <array>
 #include <bit>
+#include <cmath>
 #include <numbers>
 
 namespace Pinetime {
@@ -10,31 +11,32 @@ namespace Pinetime {
     // Implements in-place 2N to N point real-to-complex FFT
     // Performing these transforms requires some "twiddling" constants to be known
     // These constants depend only on the size of the transform
-    // Since they are expensive to compute, they can only be computed at compile time (consteval)
+    // The ARM GCC 10 libstdc++ supplied by the supported InfiniTime toolchain
+    // does not implement constexpr assignment for std::complex. Generate the
+    // small tables once during static initialisation instead of requiring a
+    // newer desktop-only C++ library implementation.
     class FFT {
     public:
-      static consteval std::size_t IntegerLog2(std::size_t n) {
+      static constexpr std::size_t IntegerLog2(std::size_t n) {
         return std::bit_width(n) - 1;
       }
 
       template <std::size_t N>
-      static consteval std::array<std::complex<float>, IntegerLog2(N)> GenComplexTwiddle() {
-        using namespace std::complex_literals;
-
+      static std::array<std::complex<float>, IntegerLog2(N)> GenComplexTwiddle() {
         std::array<std::complex<float>, IntegerLog2(N)> result;
         for (std::size_t i = 0; i < IntegerLog2(N); i++) {
-          result[i] = exp_consteval(-2.i * std::numbers::pi / static_cast<double>(1 << (i + 1)));
+          const float theta = -2.f * std::numbers::pi_v<float> / static_cast<float>(1 << (i + 1));
+          result[i] = {std::cos(theta), std::sin(theta)};
         }
         return result;
       }
 
       template <std::size_t N>
-      static consteval std::array<std::complex<float>, (N / 4) - 1> GenRealTwiddle() {
-        using namespace std::complex_literals;
-
+      static std::array<std::complex<float>, (N / 4) - 1> GenRealTwiddle() {
         std::array<std::complex<float>, (N / 4) - 1> result;
         for (std::size_t i = 0; i < (N / 4) - 1; i++) {
-          result[i] = exp_consteval(-2.i * std::numbers::pi * static_cast<double>(i + 1) / static_cast<double>(N));
+          const float theta = -2.f * std::numbers::pi_v<float> * static_cast<float>(i + 1) / static_cast<float>(N);
+          result[i] = {std::cos(theta), std::sin(theta)};
         }
         return result;
       }
@@ -88,17 +90,6 @@ namespace Pinetime {
       }
 
     private:
-      // consteval wrappers of builtins
-      template <typename _Tp>
-      static consteval std::complex<_Tp> exp_consteval(const std::complex<_Tp>& __z) {
-        return polar_consteval<_Tp>(__builtin_exp(__z.real()), __z.imag());
-      }
-
-      template <typename _Tp>
-      static consteval std::complex<_Tp> polar_consteval(const _Tp& __rho, const _Tp& __theta) {
-        return std::complex<_Tp>(__rho * __builtin_cos(__theta), __rho * __builtin_sin(__theta));
-      }
-
       template <class T, std::size_t N>
       static void InplaceBitReverse(std::array<T, N>& array) {
         // Gold-Rader algorithm

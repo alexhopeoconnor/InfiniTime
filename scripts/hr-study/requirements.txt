@@ -1,2 +1,4 @@
-# The Linux backend uses BlueZ through the mounted system D-Bus socket.
+# Linux backend; communicates only through the mounted local BlueZ D-Bus socket.
 bleak==0.22.3
+dbus-fast==2.46.4
+typing-extensions==4.16.0

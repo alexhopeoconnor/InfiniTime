@@ -16,6 +16,9 @@
 #include "components/ble/DfuService.h"
 #include "components/ble/FSService.h"
 #include "components/ble/HeartRateService.h"
+#ifdef ELIXIR_HR_STUDY
+  #include "components/ble/ElixirHrStudyService.h"
+#endif
 #include "components/ble/ImmediateAlertService.h"
 #include "components/ble/ServiceDiscovery.h"
 #include "components/ble/MotionService.h"
@@ -86,6 +89,9 @@ namespace Pinetime {
       BatteryInformationService batteryInformationService;
       ImmediateAlertService immediateAlertService;
       HeartRateService heartRateService;
+#ifdef ELIXIR_HR_STUDY
+      ElixirHrStudyService elixirHrStudyService;
+#endif
       MotionService motionService;
       FSService fsService;
       ServiceDiscovery serviceDiscovery;

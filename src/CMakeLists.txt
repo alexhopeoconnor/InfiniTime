@@ -475,6 +475,12 @@ list(APPEND SOURCE_FILES
         utility/Math.cpp
         )
 
+if(ELIXIR_HR_STUDY)
+  list(APPEND SOURCE_FILES
+          components/ble/ElixirHrStudyService.cpp
+          )
+endif()
+
 list(APPEND RECOVERY_SOURCE_FILES
         stdlib.c
         FreeRTOS/heap_4_infinitime.c
@@ -906,6 +912,9 @@ target_compile_options(${EXECUTABLE_NAME} PUBLIC
         $<$<COMPILE_LANGUAGE:CXX>: ${CXX_FLAGS}>
         $<$<COMPILE_LANGUAGE:ASM>: ${ASM_FLAGS}>
         )
+if(ELIXIR_HR_STUDY)
+  target_compile_definitions(${EXECUTABLE_NAME} PRIVATE ELIXIR_HR_STUDY=1)
+endif()
 
 set_target_properties(${EXECUTABLE_NAME} PROPERTIES
         SUFFIX ".out"
@@ -941,6 +950,9 @@ target_compile_options(${EXECUTABLE_MCUBOOT_NAME} PUBLIC
         $<$<COMPILE_LANGUAGE:CXX>: ${CXX_FLAGS}>
         $<$<COMPILE_LANGUAGE:ASM>: ${ASM_FLAGS}>
         )
+if(ELIXIR_HR_STUDY)
+  target_compile_definitions(${EXECUTABLE_MCUBOOT_NAME} PRIVATE ELIXIR_HR_STUDY=1)
+endif()
 
 set_target_properties(${EXECUTABLE_MCUBOOT_NAME} PROPERTIES
         SUFFIX ".out"

@@ -47,6 +47,9 @@ namespace Pinetime {
         Utility::DirtyValue<uint8_t> heartbeat {};
         Utility::DirtyValue<bool> heartbeatRunning {};
         Utility::DirtyValue<uint32_t> heartRateAgeSeconds {};
+#ifdef ELIXIR_HR_STUDY
+        Utility::DirtyValue<Controllers::HrStudyTransportState> studyTransportState {};
+#endif
         HeartRateReadingStatus lastHeartRateStatus = HeartRateReadingStatus::Unavailable;
         Utility::DirtyValue<bool> notificationState {};
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::days>> currentDate;

@@ -1,9 +1,13 @@
 #include "heartratetask/HeartRateTask.h"
-#include <components/heartrate/HeartRateController.h>
-#include <drivers/Hrs3300.h>
-#include <drivers/Bma421.h>
+
 #include <algorithm>
+#include <components/heartrate/HeartRateController.h>
+#ifdef ELIXIR_HR_STUDY
+  #include <components/ble/ElixirHrStudyService.h>
+#endif
 #include <cstdlib>
+#include <drivers/Bma421.h>
+#include <drivers/Hrs3300.h>
 #include <limits>
 #include <optional>
 
@@ -38,25 +42,14 @@ TickType_t HeartRateTask::CurrentTaskDelay() {
   auto CalculateSleepTicks = [&]() {
     TickType_t elapsed = currentTime - measurementStartTime;
 
-    // Target system tick is the elapsed sensor ticks multiplied by the sensor tick duration (i.e. the elapsed time)
-    // multiplied by the system tick rate
-    // Since the sensor tick duration is a whole number of milliseconds, we compute in milliseconds and then divide by 1000
-    // To avoid the number of milliseconds overflowing a u32, we take a factor of 2 out of the divisor and dividend
-    // (1024 / 2) * 65536 * 100 = 3355443200 which is less than 2^32
-
     constexpr uint16_t deltaTms = Controllers::Ppg::sampleDuration * 1000;
-    // Guard against future tick rate changes
-    static_assert((configTICK_RATE_HZ / 2ULL) * (std::numeric_limits<decltype(count)>::max() + 1ULL) * static_cast<uint64_t>((deltaTms)) <
+    static_assert((configTICK_RATE_HZ / 2ULL) * (std::numeric_limits<decltype(count)>::max() + 1ULL) * static_cast<uint64_t>(deltaTms) <
                     std::numeric_limits<uint32_t>::max(),
                   "Overflow");
     TickType_t elapsedTarget = Utility::RoundedDiv(static_cast<uint32_t>(configTICK_RATE_HZ / 2) * (static_cast<uint32_t>(count) + 1U) *
-                                                     static_cast<uint32_t>((deltaTms)),
+                                                     static_cast<uint32_t>(deltaTms),
                                                    static_cast<uint32_t>(1000 / 2));
 
-    // On count overflow, reset both count and start time
-    // Count is 16bit to avoid overflow in elapsedTarget
-    // Count overflows every 100ms * u16 max = ~2 hours, much more often than the tick count (~48 days)
-    // So no need to check for tick count overflow
     if (count == std::numeric_limits<decltype(count)>::max()) {
       count = 0;
       measurementStartTime = currentTime;
@@ -70,22 +63,17 @@ TickType_t HeartRateTask::CurrentTaskDelay() {
     case States::Disabled:
       return portMAX_DELAY;
     case States::Waiting:
-      // Sleep until a new event if background measuring disabled
       if (!backgroundPeriod.has_value()) {
         return portMAX_DELAY;
       }
-      // Sleep until the next background measurement
       if (currentTime - lastMeasurementTime < backgroundPeriod.value()) {
         return backgroundPeriod.value() - (currentTime - lastMeasurementTime);
       }
-      // If one is due now, go straight away
       return 0;
     case States::BackgroundMeasuring:
     case States::ForegroundMeasuring:
       return CalculateSleepTicks();
   }
-  // Needed to keep dumb compiler happy, this is unreachable
-  // Any new additions to States will cause the above switch statement not to compile, so this is safe
   return portMAX_DELAY;
 }
 
@@ -106,70 +94,41 @@ void HeartRateTask::Start() {
 }
 
 void HeartRateTask::Process(void* instance) {
-  auto* app = static_cast<HeartRateTask*>(instance);
-  app->Work();
+  static_cast<HeartRateTask*>(instance)->Work();
 }
 
 void HeartRateTask::Work() {
-  // measurementStartTime is always initialised before use by StartMeasurement
-  // Need to initialise lastMeasurementTime so that the first background measurement happens at a reasonable time
   lastMeasurementTime = xTaskGetTickCount();
   valueCurrentlyShown = false;
-
-  // A selected interval is an autonomous schedule. It must not require a
-  // hidden first press of Start in the Heart Rate app.
   if (BackgroundMeasurementInterval().has_value()) {
     state = States::Waiting;
   }
 
   while (true) {
-    TickType_t delay = CurrentTaskDelay();
+    const TickType_t delay = CurrentTaskDelay();
     Messages msg;
     States newState = state;
 
     if (xQueueReceive(messageQueue, &msg, delay) == pdTRUE) {
       switch (msg) {
         case Messages::GoToSleep:
-          // Ignore power state changes when disabled
-          if (state == States::Disabled) {
-            break;
-          }
-          if (state == States::ForegroundMeasuring) {
-            // A manual measurement belongs to the visible Heart Rate screen.
-            // Screen sleep ends that request; a configured interval remains
-            // independently armed for later background work.
+          if (state != States::Disabled && state == States::ForegroundMeasuring) {
             manualMeasurementRequested = false;
-            if (BackgroundMeasurementNeeded()) {
-              newState = States::BackgroundMeasuring;
-            } else {
-              newState = States::Waiting;
-            }
+            newState = BackgroundMeasurementNeeded() ? States::BackgroundMeasuring : States::Waiting;
           }
           break;
         case Messages::WakeUp:
-          // Ignore power state changes when disabled
-          if (state == States::Disabled) {
-            break;
-          }
-          // A scheduled sample must not turn into continuous foreground
-          // sampling whenever the screen wakes. Only a manual Start does so.
-          if (manualMeasurementRequested) {
+          if (state != States::Disabled && manualMeasurementRequested) {
             newState = States::ForegroundMeasuring;
           }
           break;
         case Messages::Enable:
-          // Can only be enabled when the screen is on
-          // If this constraint is somehow violated, the unexpected state
-          // will self-resolve at the next screen on event
           manualMeasurementRequested = true;
           newState = States::ForegroundMeasuring;
           valueCurrentlyShown = false;
           break;
         case Messages::Disable:
           manualMeasurementRequested = false;
-          // The setting owns the autonomous schedule. Stop the current manual
-          // sample, but keep a configured interval armed; choose Off in
-          // Settings to disable automatic sampling.
           if (BackgroundMeasurementInterval().has_value()) {
             lastMeasurementTime = xTaskGetTickCount();
             newState = States::Waiting;
@@ -179,8 +138,6 @@ void HeartRateTask::Work() {
           break;
         case Messages::BackgroundSettingsChanged:
           if (BackgroundMeasurementInterval().has_value()) {
-            // Apply Off -> interval immediately, but let a new schedule wait
-            // one full period before its first background sample.
             if (state == States::Disabled && !manualMeasurementRequested) {
               lastMeasurementTime = xTaskGetTickCount();
               newState = States::Waiting;
@@ -189,15 +146,44 @@ void HeartRateTask::Work() {
             newState = States::Disabled;
           }
           break;
+#ifdef ELIXIR_HR_STUDY
+        case Messages::StudyStart:
+          studyBuffer.Clear();
+          studySequence = 0;
+          studySessionActive = true;
+          ResetStudyMeasurementStats();
+          if (auto* studyService = controller.StudyService(); studyService != nullptr) {
+            studyService->SetSessionActive(true);
+          }
+          break;
+        case Messages::StudyStop:
+          studySessionActive = false;
+          studyBuffer.Clear();
+          if (auto* studyService = controller.StudyService(); studyService != nullptr) {
+            studyService->SetSessionActive(false);
+          }
+          break;
+        case Messages::StudyFlush:
+          DrainStudyBuffer();
+          break;
+        case Messages::StudyIndicationComplete:
+          if (auto* studyService = controller.StudyService(); studyService != nullptr &&
+                                                        studyService->ConsumeIndicationCompletion() ==
+                                                          Controllers::ElixirHrStudyService::IndicationCompletion::Confirmed) {
+            studyBuffer.PopFront();
+            DrainStudyBuffer();
+          }
+          break;
+#endif
       }
     }
+
     if (newState == States::Waiting && BackgroundMeasurementNeeded()) {
       newState = States::BackgroundMeasuring;
     } else if (newState == States::BackgroundMeasuring && !BackgroundMeasurementNeeded()) {
       newState = States::Waiting;
     }
 
-    // Apply state transition (switch sensor on/off)
     if ((newState == States::ForegroundMeasuring || newState == States::BackgroundMeasuring) &&
         (state == States::Waiting || state == States::Disabled)) {
       StartMeasurement();
@@ -232,9 +218,17 @@ void HeartRateTask::StartMeasurement() {
   lastHrs = 0;
   count = 0;
   measurementStartTime = xTaskGetTickCount();
+#ifdef ELIXIR_HR_STUDY
+  ResetStudyMeasurementStats();
+#endif
 }
 
 void HeartRateTask::StopMeasurement() {
+#ifdef ELIXIR_HR_STUDY
+  if (!studyWindowReported) {
+    ReportStudyOutcome(Controllers::HrStudyOutcome::Interrupted, 0);
+  }
+#endif
   heartRateSensor.Disable();
 }
 
@@ -254,16 +248,22 @@ void HeartRateTask::UpdateMeasurementMode() {
 }
 
 void HeartRateTask::HandleSensorData() {
-  auto sensorData = heartRateSensor.ReadHrsAls();
+  const auto sensorData = heartRateSensor.ReadHrsAls();
   if (!sensorData.valid) {
     ppg.Reset();
     controller.UpdateState(ControllerStates::SensorError);
+#ifdef ELIXIR_HR_STUDY
+    studyLastOutcome = Controllers::HrStudyOutcome::SensorError;
+#endif
     valueCurrentlyShown = false;
     HandleMeasurementTimeout(false);
     return;
   }
 
-  auto motionValues = motionSensor.Process();
+  const auto motionValues = motionSensor.Process();
+#ifdef ELIXIR_HR_STUDY
+  CaptureStudySensorSample(sensorData.hrs, sensorData.als, motionValues);
+#endif
   if (sensorData.hrs != 0 && lastHrs == 0) {
     ppg.Reset();
   }
@@ -279,22 +279,40 @@ void HeartRateTask::HandleSensorData() {
   switch (heartRateSensor.AutoGain(sensorData.hrs, sensorData.als)) {
     case Drivers::Hrs3300::PPGState::NoTouch:
       SendHeartRate(ControllerStates::NoTouch, 0);
+#ifdef ELIXIR_HR_STUDY
+      studyLastOutcome = Controllers::HrStudyOutcome::NoTouch;
+#endif
       break;
     case Drivers::Hrs3300::PPGState::Reset:
       ppg.Reset();
       SendHeartRate(ControllerStates::NotEnoughData, 0);
+#ifdef ELIXIR_HR_STUDY
+      studyLastOutcome = Controllers::HrStudyOutcome::NotEnoughData;
+#endif
       break;
     case Drivers::Hrs3300::PPGState::Running:
       bpm = ppg.HeartRate();
       if (bpm.has_value()) {
         SendHeartRate(ControllerStates::Measuring, bpm.value());
+#ifdef ELIXIR_HR_STUDY
+        ReportStudyOutcome(Controllers::HrStudyOutcome::Accepted, bpm.value());
+#endif
       } else if (ppg.SufficientData()) {
         controller.UpdateState(ControllerStates::Searching);
+#ifdef ELIXIR_HR_STUDY
+        studyLastOutcome = Controllers::HrStudyOutcome::SignalUnstable;
+#endif
       } else {
         controller.UpdateState(ControllerStates::NotEnoughData);
+#ifdef ELIXIR_HR_STUDY
+        studyLastOutcome = Controllers::HrStudyOutcome::NotEnoughData;
+#endif
       }
       break;
     case Drivers::Hrs3300::PPGState::Off:
+#ifdef ELIXIR_HR_STUDY
+      ReportStudyOutcome(Controllers::HrStudyOutcome::Interrupted, 0);
+#endif
       controller.UpdateState(ControllerStates::Stopped);
       return;
   }
@@ -311,29 +329,25 @@ void HeartRateTask::HandleSensorData() {
 }
 
 void HeartRateTask::HandleMeasurementTimeout(bool reportSignalFailure) {
-  // If been measuring for longer than the time limit, set the last measurement time.
-  // This allows giving up on background measurement after a while
-  // and also means that background measurement won't begin immediately after
-  // an unsuccessful long foreground measurement
   const auto now = xTaskGetTickCount();
   if (now - measurementStartTime >= backgroundMeasurementTimeLimit) {
-    // When measuring, propagate failure if no value within the time limit
-    // Prevents stale heart rates from being displayed for >1 background period
-    // Or more than the time limit after switching to screen on (where the last background measurement was successful)
-    // Note: Once a successful measurement is recorded in screen on it will never be cleared
-    // without some other state change e.g. ambient light reset
     if (!valueCurrentlyShown && reportSignalFailure) {
       controller.UpdateState(ControllerStates::SignalUnstable);
+#ifdef ELIXIR_HR_STUDY
+      if (studyLastOutcome == Controllers::HrStudyOutcome::NotEnoughData) {
+        studyLastOutcome = Controllers::HrStudyOutcome::SignalUnstable;
+      }
+#endif
       valueCurrentlyShown = false;
     }
+#ifdef ELIXIR_HR_STUDY
+    if (!valueCurrentlyShown) {
+      ReportStudyOutcome(studyLastOutcome, 0);
+    }
+#endif
     if (state == States::BackgroundMeasuring) {
       const auto backgroundPeriod = BackgroundMeasurementInterval();
-      // Preserve start-to-start cadence for intervals longer than one sample
-      // window. At 30 seconds (or Continuous), using the original start time
-      // would make a failed sample immediately restart forever.
-      lastMeasurementTime = backgroundPeriod.has_value() && backgroundPeriod.value() > backgroundMeasurementTimeLimit
-                              ? measurementStartTime
-                              : now;
+      lastMeasurementTime = backgroundPeriod.has_value() && backgroundPeriod.value() > backgroundMeasurementTimeLimit ? measurementStartTime : now;
     } else {
       lastMeasurementTime = now;
     }
@@ -345,3 +359,76 @@ void HeartRateTask::SendHeartRate(ControllerStates state, int bpm) {
   controller.UpdateState(state);
   controller.UpdateHeartRate(bpm);
 }
+
+#ifdef ELIXIR_HR_STUDY
+void HeartRateTask::ResetStudyMeasurementStats() {
+  studyPpgSum = 0;
+  studyPpgMin = std::numeric_limits<uint16_t>::max();
+  studyPpgMax = 0;
+  studyPpgSamples = 0;
+  studyMotionLevel = 0;
+  studyAmbientLevel = 0;
+  studyHasPreviousMotion = false;
+  studyStepStart = 0;
+  studyCurrentSteps = 0;
+  studyWindowReported = false;
+  studyLastOutcome = Controllers::HrStudyOutcome::NotEnoughData;
+}
+
+void HeartRateTask::CaptureStudySensorSample(uint16_t hrs, uint16_t als, const Drivers::Bma421::Values& motionValues) {
+  studyPpgSum += hrs;
+  studyPpgMin = std::min(studyPpgMin, hrs);
+  studyPpgMax = std::max(studyPpgMax, hrs);
+  studyPpgSamples++;
+  studyAmbientLevel = std::max(studyAmbientLevel, static_cast<uint8_t>(std::min<uint16_t>(255, als >> 8)));
+  studyCurrentSteps = motionValues.steps;
+  if (!studyHasPreviousMotion) {
+    studyPreviousX = motionValues.x;
+    studyPreviousY = motionValues.y;
+    studyPreviousZ = motionValues.z;
+    studyStepStart = motionValues.steps;
+    studyHasPreviousMotion = true;
+    return;
+  }
+  const int32_t delta = std::abs(static_cast<int32_t>(motionValues.x) - studyPreviousX) +
+                        std::abs(static_cast<int32_t>(motionValues.y) - studyPreviousY) +
+                        std::abs(static_cast<int32_t>(motionValues.z) - studyPreviousZ);
+  studyMotionLevel = std::max(studyMotionLevel,
+                              static_cast<uint16_t>(std::min<int32_t>(delta, std::numeric_limits<uint16_t>::max())));
+  studyPreviousX = motionValues.x;
+  studyPreviousY = motionValues.y;
+  studyPreviousZ = motionValues.z;
+}
+
+void HeartRateTask::ReportStudyOutcome(Controllers::HrStudyOutcome outcome, uint8_t bpm) {
+  if (!studySessionActive || studyWindowReported) {
+    return;
+  }
+  Controllers::HrStudyRecord record {};
+  record.sequence = studySequence++;
+  record.watchTick = xTaskGetTickCount();
+  record.ppgMean = studyPpgSamples == 0 ? 0 : static_cast<uint16_t>(studyPpgSum / studyPpgSamples);
+  record.ppgRange = studyPpgSamples == 0 ? 0 : static_cast<uint16_t>(studyPpgMax - studyPpgMin);
+  record.motionLevel = studyMotionLevel;
+  record.bpm = bpm;
+  record.outcome = static_cast<uint8_t>(outcome);
+  record.flags = state == States::BackgroundMeasuring ? 0x01 : 0x02;
+  record.stepDelta = static_cast<uint8_t>(std::min<uint32_t>(studyCurrentSteps - studyStepStart, std::numeric_limits<uint8_t>::max()));
+  record.ambientLevel = studyAmbientLevel;
+  record.profileDrive = 1; // PPGv2 estimator.
+  studyBuffer.Push(record);
+  studyWindowReported = true;
+  DrainStudyBuffer();
+}
+
+void HeartRateTask::DrainStudyBuffer() {
+  if (!studySessionActive || studyBuffer.Empty()) {
+    return;
+  }
+  if (auto* studyService = controller.StudyService(); studyService != nullptr) {
+    if (const auto* record = studyBuffer.Front(); record != nullptr) {
+      studyService->TryIndicate(*record);
+    }
+  }
+}
+#endif

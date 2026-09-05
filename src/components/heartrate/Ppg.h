@@ -61,9 +61,11 @@ namespace Pinetime {
       // Adaptive filter reset threshold
       static constexpr float adaptiveResetThresh = 2.f;
 
-      // FFT constants (computed at compile time to avoid expensive runtime calculations)
-      static constexpr auto complexTwiddle = Utility::FFT::GenComplexTwiddle<fftLength / 2>();
-      static constexpr auto realTwiddle = Utility::FFT::GenRealTwiddle<fftLength>();
+      // The supported ARM GCC 10 standard library cannot construct
+      // std::complex tables in a constant expression. These small tables are
+      // generated once during static initialisation by FFT.h instead.
+      inline static const auto complexTwiddle = Utility::FFT::GenComplexTwiddle<fftLength / 2>();
+      inline static const auto realTwiddle = Utility::FFT::GenRealTwiddle<fftLength>();
 
       // Prominence filter constants
       // Generated with scipy butter(2, (0.07, 0.65), btype="bandpass", output="sos")

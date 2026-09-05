@@ -6,7 +6,7 @@ tag, with `upstream` kept as the official repository remote.
 
 The device continues to use the established InfiniTime BLE device identity for
 phone compatibility. Its standard Device Information **software revision** is
-`ElixirTime`, while its firmware revision is `1.16.2`; the Terminal watch face
+`ElixirTime`, while its firmware revision is `1.16.3`; the Terminal watch face
 identifies the customised firmware as `elixir@time`. These independent,
 visible identifiers make a successful custom flash distinguishable from an
 upstream `1.16.1` image.
@@ -65,6 +65,34 @@ sampling until it is changed to another option or Off. The firmware retains
 only the latest verified value and its age; it does **not** yet maintain a
 heart-rate history.
 
+## Temporary HR comparison builds
+
+`ELIXIR_HR_STUDY` is a disabled-by-default build option used only while
+comparing the current estimator with the separate `research/ppgv2` branch. It
+does not belong to normal ElixirTime firmware, does not change persisted
+settings, and does not advertise a new service. A study build registers a
+private, encrypted-control GATT service after the desktop connects. Its
+20-byte indication record contains one completed measurement-window outcome:
+accepted BPM or failure reason, PPG mean/range, compact accelerometer/step and
+ambient context, power/mode flags, and a watch tick. It deliberately sends no
+raw optical samples.
+
+The HR task stores at most 128 such records in RAM. It retains the oldest one
+until the paired desktop confirms its normal BLE indication; walking away from
+the PC therefore buffers completed windows and returning resubscribes and
+flushes the cache. The standard Bluetooth Heart Rate Service remains live-only
+and never replays cached values as if they were current. A reboot, power loss,
+or ring-buffer overflow loses pending study records by design.
+
+During an active study the Terminal Bluetooth row makes this visible without
+adding a new screen: amber `buf` means the watch is collecting while the
+desktop is absent, blue `tx` means one indication is awaiting confirmation,
+and green `ok` means the most recent record was confirmed. The code and its
+Docker-only recorder are documented in
+[`scripts/hr-study/README.md`](../scripts/hr-study/README.md). The launcher is
+the sole approved automated time sync: it starts the restricted DFU-only ITD
+daemon, runs one explicit `itctl set time now`, stops that daemon, and only
+then starts the recorder. It can be made non-mutating with `--no-sync-time`.
 ## First upgrade and recovery checklist
 
 The device inspected before this project was running InfiniTime `1.14.1`, but
@@ -106,15 +134,15 @@ The normal long-term companion is the phone, not this development computer.
 Use a desktop BLE connection only for a short, explicit diagnostic or DFU
 session, and disconnect it afterwards so the phone can reconnect.
 
-### Containerised heart-rate baseline capture
+### Containerised heart-rate study capture
 
-[`scripts/hr-study`](../scripts/hr-study) is a bounded baseline recorder for
-comparing the current firmware with a temporary PPG research build. It records
-only received standard Heart Rate Measurement (`0x2A37`) notifications and
-BlueZ connection events to an ignored local JSONL file. It is neither a
-companion service nor a firmware-control tool: it does not scan, pair, change
-settings, set the watch clock, write files to the watch, or listen on a network
-port.
+[`scripts/hr-study`](../scripts/hr-study) is the bounded comparison recorder
+for this research branch. With `ELIXIR_HR_STUDY=ON`, it subscribes to the
+private indication service, starts one explicitly bounded session, and writes
+one JSONL record per completed measurement window. It neither scans nor pairs,
+opens a network listener, or acts as a persistent companion. The normal Heart
+Rate Service stays live-only; the private service carries only the temporary
+window summaries and buffers them across desktop range loss.
 
 Its Python environment exists only in a local Docker image. Runtime networking
 is disabled; the container uses the already-paired watch through a mounted
@@ -122,21 +150,8 @@ BlueZ system D-Bus socket, has no Linux capabilities, and disconnects when the
 bounded session ends. Docker's default AppArmor profile blocks that explicitly
 mounted D-Bus use, so the recorder disables only that container profile; it
 does not use privileged mode, host networking, raw HCI access, or host Python.
-See the tool README for its one-command recording and summary workflow. The
-result measures what a normal BLE receiver saw, not a complete measurement
-history: unchanged accepted BPM values may produce no new notification. If the
-watch leaves range, the bounded recorder timestamps the loss and retries the
-existing paired device; it can resume future notifications but cannot backfill
-the missed interval because current firmware exposes no heart-rate history.
-
-The recorder comparison stays inside the same network-disabled Docker image and
-reports BLE link coverage separately from heart-rate events. If a nearby watch
-repeatedly loses the desktop connection, use its short `diagnose-link.sh`
-workflow before changing BlueZ configuration, rebonding, or reflashing. That
-workflow uses the host's native `btmon` to record a local, mode-0600 raw HCI
-trace alongside the bounded recorder. The trace is ignored by Git, can contain
-BLE packet data, requires an existing sudo credential, and is not a companion
-service or a watch write path.
+See the tool README for the one-command recording, reconnect behaviour, and
+outcome-based comparison workflow.
 
 [ITD](https://git.elara.ws/Elara6331/itd) and its `itctl` command are useful
 Linux diagnostics: they can read battery, heart rate, steps, and motion, set
