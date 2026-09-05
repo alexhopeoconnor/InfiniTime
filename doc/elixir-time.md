@@ -6,7 +6,7 @@ tag, with `upstream` kept as the official repository remote.
 
 The device continues to use the established InfiniTime BLE device identity for
 phone compatibility. Its standard Device Information **software revision** is
-`ElixirTime`, while its firmware revision is `1.16.7`; the Terminal watch face
+`ElixirTime`, while its firmware revision is `1.16.9`; the Terminal watch face
 identifies the customised firmware as `elixir@time`. These independent,
 visible identifiers make a successful custom flash distinguishable from an
 upstream `1.16.1` image.
@@ -45,7 +45,8 @@ now treated as an invalid estimate, not as a physiological zero. The most
 recent verified reading is retained and classified as:
 
 - **fresh** for 30 seconds;
-- **stale** for the following 90 seconds, visibly marked with `~` and an age;
+- **stale** for the following 90 seconds, visibly marked with `~` and an age
+  that advances once per second while the face is awake;
 - **unavailable** after two minutes, or before the first valid reading.
 
 This is a display/data-quality improvement, not a claim of clinical accuracy.
@@ -61,8 +62,14 @@ Heart-rate acquisition is suspended whenever external power is present. This
 uses the cradle-presence signal rather than the transient charging-current
 signal, so it remains disabled after the battery reaches 100%. Docking stops
 an active acquisition immediately; undocking begins a fresh configured
-interval. While docked, the Terminal face shows `heart dock` instead of a
-current or stale reading.
+interval. The Terminal heart row is icon-led: a green heart means a fresh
+reading; amber means stale or a degraded signal; a slow amber/orange pulse
+means a real optical acquisition is active; grey means unavailable; and a grey
+heart followed by the plug glyph means the cradle has suspended measurement.
+The pulse is deliberately an acquisition indicator, never a simulated
+physiological heartbeat. The row preserves the latest valid value as `~BPM`
+with its age, or uses short `...`, `?`, and `--` states rather than verbose
+labels.
 
 The screen reports the acquisition condition rather than calling every failure
 "not enough data": it distinguishes initial acquisition, unstable optical
@@ -95,6 +102,15 @@ Settings -> Over-the-air -> Firmware & files -> Enabled
 The inspected saved setting had this mode disabled. In 1.16.x that setting
 also gates the DFU and file-system BLE services, so it must be enabled once
 from the watch. Do not remove the OTA setting from ElixirTime.
+
+InfiniTime's application clock is initialised from a build-time placeholder
+after an application reboot; it needs an explicit BLE Current Time sync from a
+phone companion or the bounded desktop tooling. The DFU-only desktop daemon
+intentionally never syncs time as a side effect of a flash. The heart-rate
+study launcher performs one explicit host-local time and timezone sync before
+a normal test session, then stops that daemon before recording begins. This is
+the appropriate place for that write; ordinary DFU and diagnostic sessions
+must remain non-mutating.
 
 For a first installation, keep a known-good upstream `.zip` and use the
 normal application DFU route. Do not send a custom build until all of these
