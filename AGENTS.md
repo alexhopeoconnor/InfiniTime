@@ -18,6 +18,14 @@ the user selects an interval; preserve its distinction from a manual
 foreground measurement. The watch has no independent network link; future
 remote integrations belong primarily on the phone side.
 
+The user has explicitly authorised one narrow exception: temporary
+`ELIXIR_HR_STUDY` comparison firmware may expose the private, unadvertised
+Elixir HR Study GATT service. It is compiled out by default, captures one
+20-byte completed-window summary at a time, and is only for a bounded Docker
+recorder session with the phone Bluetooth off. Do not turn it into a companion
+API, add it to advertising, replay cached data through the standard Heart Rate
+Service, or ship it in normal ElixirTime builds.
+
 `doc/elixir-time.md` is the product and maintenance guide. Keep its statements
 in sync when an ElixirTime-specific design decision changes.
 
@@ -91,8 +99,12 @@ itctl watch steps --json
 ```
 
 `itctl set time now` changes the watch clock; use it only when explicitly
-requested. Do not use `itctl resources`, mutating `itctl filesystem` commands,
-`itctl notify`, or weather-update commands.
+requested. The user has authorised `scripts/hr-study/record.sh` to perform one
+such sync before a normal study session, unless its `--no-sync-time` flag is
+used. It must first prove the connection with `itctl firmware version`, then
+stop the temporary daemon before the Docker BLE recorder starts. Do not use
+`itctl resources`, mutating `itctl filesystem` commands, `itctl notify`, or
+weather-update commands.
 
 ## Approved desktop OTA update discipline
 

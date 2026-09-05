@@ -236,7 +236,33 @@ void WatchFaceTerminal::Refresh() {
 
   bleState = bleController.IsConnected();
   bleRadioEnabled = bleController.IsRadioEnabled();
-  if (bleState.IsUpdated() || bleRadioEnabled.IsUpdated()) {
+#ifdef ELIXIR_HR_STUDY
+  studyTransportState = heartRateController.GetStudyTransportState();
+  const bool studyTransportStateChanged = studyTransportState.IsUpdated();
+#endif
+  if (bleState.IsUpdated() || bleRadioEnabled.IsUpdated()
+#ifdef ELIXIR_HR_STUDY
+      || studyTransportStateChanged
+#endif
+  ) {
+#ifdef ELIXIR_HR_STUDY
+    switch (studyTransportState.Get()) {
+      case Controllers::HrStudyTransportState::Buffering:
+        lv_label_set_text_fmt(connectState, "#ffffff %s# buf", Symbols::bluetooth);
+        lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
+        return;
+      case Controllers::HrStudyTransportState::Sending:
+        lv_label_set_text_fmt(connectState, "#ffffff %s# tx", Symbols::bluetooth);
+        lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::blue);
+        return;
+      case Controllers::HrStudyTransportState::Connected:
+        lv_label_set_text_fmt(connectState, "#ffffff %s# ok", Symbols::bluetooth);
+        lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::green);
+        return;
+      case Controllers::HrStudyTransportState::Off:
+        break;
+    }
+#endif
     if (!bleRadioEnabled.Get()) {
       lv_label_set_text_fmt(connectState, "#ffffff %s# off", Symbols::bluetooth);
       lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::gray);

@@ -1,0 +1,6 @@
+*
+!Dockerfile
+!requirements.txt
+!ble_hr_logger.py
+!summarize.py
+!compare.py

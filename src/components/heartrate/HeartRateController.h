@@ -3,6 +3,9 @@
 #include <cstdint>
 #include <FreeRTOS.h>
 #include <components/ble/HeartRateService.h>
+#ifdef ELIXIR_HR_STUDY
+  #include <components/heartrate/HrStudyRecord.h>
+#endif
 
 namespace Pinetime {
   namespace Applications {
@@ -14,6 +17,9 @@ namespace Pinetime {
   }
 
   namespace Controllers {
+#ifdef ELIXIR_HR_STUDY
+    class ElixirHrStudyService;
+#endif
     class HeartRateController {
     public:
       enum class States : uint8_t { Stopped, NotEnoughData, NoTouch, SignalUnstable, AmbientLight, SensorError, Running };
@@ -73,6 +79,16 @@ namespace Pinetime {
 
       void SetService(Pinetime::Controllers::HeartRateService* service);
 
+#ifdef ELIXIR_HR_STUDY
+      void SetStudyService(Pinetime::Controllers::ElixirHrStudyService* service);
+      Pinetime::Controllers::ElixirHrStudyService* StudyService() const;
+      HrStudyTransportState GetStudyTransportState() const;
+      void RequestStudyStart();
+      void RequestStudyStop();
+      void RequestStudyFlush();
+      void RequestStudyIndicationComplete();
+#endif
+
     private:
       Applications::HeartRateTask* task = nullptr;
       States state = States::Stopped;
@@ -81,6 +97,9 @@ namespace Pinetime {
       bool hasValidHeartRate = false;
       TickType_t lastValidHeartRateTick = 0;
       Pinetime::Controllers::HeartRateService* service = nullptr;
+#ifdef ELIXIR_HR_STUDY
+      Pinetime::Controllers::ElixirHrStudyService* studyService = nullptr;
+#endif
     };
   }
 }

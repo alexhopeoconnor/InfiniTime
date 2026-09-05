@@ -97,14 +97,21 @@ Pinetime::Controllers::Ble bleController;
 Pinetime::Controllers::FS fs {spiNorFlash};
 Pinetime::Controllers::Settings settingsController {fs};
 Pinetime::Controllers::MotorController motorController {};
+Pinetime::Controllers::MotionController motionController;
 
 Pinetime::Controllers::HeartRateController heartRateController;
-Pinetime::Applications::HeartRateTask heartRateApp(heartRateSensor, heartRateController, settingsController, batteryController);
+Pinetime::Applications::HeartRateTask heartRateApp(heartRateSensor,
+                                                    heartRateController,
+                                                    settingsController,
+                                                    batteryController
+#ifdef ELIXIR_HR_STUDY
+                                                    , motionController
+#endif
+                                                    );
 
 Pinetime::Controllers::DateTime dateTimeController {settingsController};
 Pinetime::Drivers::Watchdog watchdog;
 Pinetime::Controllers::NotificationManager notificationManager;
-Pinetime::Controllers::MotionController motionController;
 Pinetime::Controllers::StopWatchController stopWatchController;
 Pinetime::Controllers::AlarmController alarmController {dateTimeController, fs};
 Pinetime::Controllers::TouchHandler touchHandler;

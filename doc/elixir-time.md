@@ -87,6 +87,35 @@ several display lines for future watch-local information. No Home Assistant
 mode or multi-press button gesture is implemented yet: those need a defined
 on-watch state model and remain outside the current firmware scope.
 
+## Temporary HR comparison builds
+
+`ELIXIR_HR_STUDY` is a disabled-by-default build option used only while
+comparing the current estimator with the separate `research/ppgv2` branch. It
+does not belong to normal ElixirTime firmware, does not change persisted
+settings, and does not advertise a new service. A study build registers a
+private, encrypted-control GATT service after the desktop connects. Its
+20-byte indication record contains one completed measurement-window outcome:
+accepted BPM or failure reason, PPG mean/range, compact accelerometer/step and
+ambient context, power/mode flags, and a watch tick. It deliberately sends no
+raw optical samples.
+
+The HR task stores at most 128 such records in RAM. It retains the oldest one
+until the paired desktop confirms its normal BLE indication; walking away from
+the PC therefore buffers completed windows and returning resubscribes and
+flushes the cache. The standard Bluetooth Heart Rate Service remains live-only
+and never replays cached values as if they were current. A reboot, power loss,
+or ring-buffer overflow loses pending study records by design.
+
+During an active study the Terminal Bluetooth row makes this visible without
+adding a new screen: amber `buf` means the watch is collecting while the
+desktop is absent, blue `tx` means one indication is awaiting confirmation,
+and green `ok` means the most recent record was confirmed. The code and its
+Docker-only recorder are documented in
+[`scripts/hr-study/README.md`](../scripts/hr-study/README.md). The launcher is
+the sole approved automated time sync: it starts the restricted DFU-only ITD
+daemon, runs one explicit `itctl set time now`, stops that daemon, and only
+then starts the recorder. It can be made non-mutating with `--no-sync-time`.
+
 ## First upgrade and recovery checklist
 
 The device inspected before this project was running InfiniTime `1.14.1`, but

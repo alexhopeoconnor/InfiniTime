@@ -2,6 +2,12 @@
 #include <drivers/Hrs3300.h>
 #include <components/battery/BatteryController.h>
 #include <components/heartrate/HeartRateController.h>
+#ifdef ELIXIR_HR_STUDY
+  #include <components/ble/ElixirHrStudyService.h>
+  #include <components/motion/MotionController.h>
+#endif
+#include <algorithm>
+#include <cstdlib>
 #include <limits>
 
 #include "utility/Math.h"
@@ -99,8 +105,16 @@ TickType_t HeartRateTask::CurrentTaskDelay() {
 HeartRateTask::HeartRateTask(Drivers::Hrs3300& heartRateSensor,
                              Controllers::HeartRateController& controller,
                              Controllers::Settings& settings,
-                             const Controllers::Battery& battery)
-  : heartRateSensor {heartRateSensor}, controller {controller}, settings {settings}, battery {battery} {
+                             const Controllers::Battery& battery
+#ifdef ELIXIR_HR_STUDY
+                             , Controllers::MotionController& motionController
+#endif
+                             )
+  : heartRateSensor {heartRateSensor}, controller {controller}, settings {settings}, battery {battery}
+#ifdef ELIXIR_HR_STUDY
+    , motionController {motionController}
+#endif
+{
 }
 
 void HeartRateTask::Start() {
@@ -214,6 +228,36 @@ void HeartRateTask::Work() {
             newState = States::Disabled;
           }
           break;
+#ifdef ELIXIR_HR_STUDY
+        case Messages::StudyStart:
+          studyBuffer.Clear();
+          studySequence = 0;
+          studySessionActive = true;
+          ResetStudyMeasurementStats();
+          if (auto* studyService = controller.StudyService(); studyService != nullptr) {
+            studyService->SetSessionActive(true);
+          }
+          break;
+        case Messages::StudyStop:
+          studySessionActive = false;
+          studyBuffer.Clear();
+          if (auto* studyService = controller.StudyService(); studyService != nullptr) {
+            studyService->SetSessionActive(false);
+          }
+          break;
+        case Messages::StudyFlush:
+          DrainStudyBuffer();
+          break;
+        case Messages::StudyIndicationComplete:
+          if (auto* studyService = controller.StudyService(); studyService != nullptr) {
+            const auto completion = studyService->ConsumeIndicationCompletion();
+            if (completion == Controllers::ElixirHrStudyService::IndicationCompletion::Confirmed) {
+              studyBuffer.PopFront();
+              DrainStudyBuffer();
+            }
+          }
+          break;
+#endif
       }
     }
     // Defend against a power transition racing the scheduler message. The
@@ -261,9 +305,17 @@ void HeartRateTask::StartMeasurement() {
   measurementSucceeded = false;
   count = 0;
   measurementStartTime = xTaskGetTickCount();
+#ifdef ELIXIR_HR_STUDY
+  ResetStudyMeasurementStats();
+#endif
 }
 
 void HeartRateTask::StopMeasurement() {
+#ifdef ELIXIR_HR_STUDY
+  if (!studyWindowReported) {
+    ReportStudyOutcome(Controllers::HrStudyOutcome::Interrupted, 0);
+  }
+#endif
   heartRateSensor.Disable();
   ppg.Reset(true);
   vTaskDelay(100);
@@ -292,10 +344,17 @@ void HeartRateTask::HandleSensorData() {
     // the estimator or replace a verified previous reading with a fake zero.
     ppg.Reset(true);
     controller.Update(Controllers::HeartRateController::States::SensorError, 0);
+#ifdef ELIXIR_HR_STUDY
+    studyLastOutcome = Controllers::HrStudyOutcome::SensorError;
+#endif
     valueCurrentlyShown = false;
     HandleMeasurementTimeout(false);
     return;
   }
+
+#ifdef ELIXIR_HR_STUDY
+  CaptureStudySensorSample(sensorData.hrs, sensorData.als);
+#endif
 
   int8_t ambient = ppg.Preprocess(sensorData.hrs, sensorData.als);
   int bpm = ppg.HeartRate();
@@ -305,6 +364,9 @@ void HeartRateTask::HandleSensorData() {
     // Reset all DAQ buffers
     ppg.Reset(true);
     controller.Update(Controllers::HeartRateController::States::AmbientLight, 0);
+#ifdef ELIXIR_HR_STUDY
+    studyLastOutcome = Controllers::HrStudyOutcome::AmbientLight;
+#endif
     valueCurrentlyShown = false;
     HandleMeasurementTimeout(false);
     return;
@@ -317,10 +379,16 @@ void HeartRateTask::HandleSensorData() {
     // The spectrum was not usable. Preserve any previous verified reading
     // while making the acquisition failure visible to the user.
     controller.Update(Controllers::HeartRateController::States::SignalUnstable, 0);
+#ifdef ELIXIR_HR_STUDY
+    studyLastOutcome = Controllers::HrStudyOutcome::SignalUnstable;
+#endif
     valueCurrentlyShown = false;
   } else if (bpm == -2) {
     // Not enough data
     bpm = 0;
+#ifdef ELIXIR_HR_STUDY
+    studyLastOutcome = Controllers::HrStudyOutcome::NotEnoughData;
+#endif
     if (!valueCurrentlyShown) {
       controller.Update(Controllers::HeartRateController::States::NotEnoughData, bpm);
     }
@@ -339,6 +407,9 @@ void HeartRateTask::HandleSensorData() {
     measurementSucceeded = true;
     valueCurrentlyShown = true;
     controller.Update(Controllers::HeartRateController::States::Running, bpm);
+#ifdef ELIXIR_HR_STUDY
+    ReportStudyOutcome(Controllers::HrStudyOutcome::Accepted, static_cast<uint8_t>(bpm));
+#endif
     return;
   }
   HandleMeasurementTimeout(true);
@@ -358,8 +429,18 @@ void HeartRateTask::HandleMeasurementTimeout(bool reportSignalFailure) {
     // without some other state change e.g. ambient light reset
     if (!measurementSucceeded && reportSignalFailure) {
       controller.Update(Controllers::HeartRateController::States::SignalUnstable, 0);
+#ifdef ELIXIR_HR_STUDY
+      if (studyLastOutcome == Controllers::HrStudyOutcome::NotEnoughData) {
+        studyLastOutcome = Controllers::HrStudyOutcome::SignalUnstable;
+      }
+#endif
       valueCurrentlyShown = false;
     }
+#ifdef ELIXIR_HR_STUDY
+    if (!measurementSucceeded) {
+      ReportStudyOutcome(studyLastOutcome, 0);
+    }
+#endif
     if (state == States::BackgroundMeasuring) {
       const auto backgroundPeriod = BackgroundMeasurementInterval();
       // Preserve start-to-start cadence for intervals longer than one sample
@@ -373,3 +454,68 @@ void HeartRateTask::HandleMeasurementTimeout(bool reportSignalFailure) {
     }
   }
 }
+
+#ifdef ELIXIR_HR_STUDY
+void HeartRateTask::ResetStudyMeasurementStats() {
+  studyPpgSum = 0;
+  studyPpgMin = std::numeric_limits<uint16_t>::max();
+  studyPpgMax = 0;
+  studyPpgSamples = 0;
+  studyMotionLevel = 0;
+  studyAmbientLevel = 0;
+  studyStepStart = motionController.NbSteps();
+  studyWindowReported = false;
+  studyLastOutcome = Controllers::HrStudyOutcome::NotEnoughData;
+}
+
+void HeartRateTask::CaptureStudySensorSample(uint16_t hrs, uint16_t als) {
+  studyPpgSum += hrs;
+  studyPpgMin = std::min(studyPpgMin, hrs);
+  studyPpgMax = std::max(studyPpgMax, hrs);
+  studyPpgSamples++;
+  studyAmbientLevel = std::max(studyAmbientLevel, static_cast<uint8_t>(std::min<uint16_t>(255, als >> 8)));
+
+  const auto shakeSpeed = motionController.CurrentShakeSpeed();
+  if (shakeSpeed > 0) {
+    studyMotionLevel = std::max(studyMotionLevel, static_cast<uint16_t>(std::min<int32_t>(shakeSpeed, UINT16_MAX)));
+  }
+}
+
+void HeartRateTask::ReportStudyOutcome(Controllers::HrStudyOutcome outcome, uint8_t bpm) {
+  if (!studySessionActive || studyWindowReported) {
+    return;
+  }
+
+  Controllers::HrStudyRecord record {};
+  record.sequence = studySequence++;
+  record.watchTick = xTaskGetTickCount();
+  record.ppgMean = studyPpgSamples == 0 ? 0 : static_cast<uint16_t>(studyPpgSum / studyPpgSamples);
+  record.ppgRange = studyPpgSamples == 0 ? 0 : static_cast<uint16_t>(studyPpgMax - studyPpgMin);
+  record.motionLevel = studyMotionLevel;
+  record.bpm = bpm;
+  record.outcome = static_cast<uint8_t>(outcome);
+  record.flags = state == States::BackgroundMeasuring ? 0x01 : 0x02;
+  if (battery.IsPowerPresent()) {
+    record.flags |= 0x04;
+  }
+  const auto stepDelta = motionController.NbSteps() - studyStepStart;
+  record.stepDelta = static_cast<uint8_t>(std::min<uint32_t>(stepDelta, UINT8_MAX));
+  record.ambientLevel = studyAmbientLevel;
+  record.profileDrive = 0; // baseline estimator; PPGv2 assigns its own profile value.
+
+  studyBuffer.Push(record);
+  studyWindowReported = true;
+  DrainStudyBuffer();
+}
+
+void HeartRateTask::DrainStudyBuffer() {
+  if (!studySessionActive || studyBuffer.Empty()) {
+    return;
+  }
+  if (auto* studyService = controller.StudyService(); studyService != nullptr) {
+    if (const auto* record = studyBuffer.Front(); record != nullptr) {
+      studyService->TryIndicate(*record);
+    }
+  }
+}
+#endif

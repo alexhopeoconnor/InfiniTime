@@ -45,6 +45,9 @@ NimbleController::NimbleController(Pinetime::System::SystemTask& systemTask,
     batteryInformationService {batteryController},
     immediateAlertService {systemTask, notificationManager},
     heartRateService {*this, heartRateController},
+#ifdef ELIXIR_HR_STUDY
+    elixirHrStudyService {*this, heartRateController},
+#endif
     motionService {*this, motionController},
     fsService {systemTask, fs},
     serviceDiscovery({&currentTimeClient, &alertNotificationClient}) {
@@ -91,6 +94,9 @@ void NimbleController::Init() {
   batteryInformationService.Init();
   immediateAlertService.Init();
   heartRateService.Init();
+#ifdef ELIXIR_HR_STUDY
+  elixirHrStudyService.Init();
+#endif
   motionService.Init();
   fsService.Init();
 
@@ -218,6 +224,9 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
 
       currentTimeClient.Reset();
       alertNotificationClient.Reset();
+#ifdef ELIXIR_HR_STUDY
+      elixirHrStudyService.OnDisconnected();
+#endif
       connectionHandle = BLE_HS_CONN_HANDLE_NONE;
       if (bleController.IsConnected()) {
         bleController.Disconnect();
@@ -327,6 +336,9 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
         heartRateService.UnsubscribeNotification(event->subscribe.attr_handle);
         motionService.UnsubscribeNotification(event->subscribe.attr_handle);
       }
+#ifdef ELIXIR_HR_STUDY
+      elixirHrStudyService.UpdateIndicationSubscription(event->subscribe.attr_handle, event->subscribe.cur_indicate);
+#endif
       break;
 
     case BLE_GAP_EVENT_MTU:
@@ -369,6 +381,9 @@ int NimbleController::OnGAPEvent(ble_gap_event* event) {
 
     case BLE_GAP_EVENT_NOTIFY_TX:
       NRF_LOG_INFO("Notify event : BLE_GAP_EVENT_NOTIFY_TX");
+#ifdef ELIXIR_HR_STUDY
+      elixirHrStudyService.OnIndicationComplete(*event);
+#endif
       break;
 
     case BLE_GAP_EVENT_IDENTITY_RESOLVED:

@@ -1,6 +1,9 @@
 #include "components/heartrate/HeartRateController.h"
 #include <heartratetask/HeartRateTask.h>
 #include <systemtask/SystemTask.h>
+#ifdef ELIXIR_HR_STUDY
+  #include <components/ble/ElixirHrStudyService.h>
+#endif
 
 using namespace Pinetime::Controllers;
 
@@ -54,3 +57,41 @@ void HeartRateController::SetHeartRateTask(Pinetime::Applications::HeartRateTask
 void HeartRateController::SetService(Pinetime::Controllers::HeartRateService* service) {
   this->service = service;
 }
+
+#ifdef ELIXIR_HR_STUDY
+void HeartRateController::SetStudyService(Pinetime::Controllers::ElixirHrStudyService* service) {
+  studyService = service;
+}
+
+Pinetime::Controllers::ElixirHrStudyService* HeartRateController::StudyService() const {
+  return studyService;
+}
+
+HrStudyTransportState HeartRateController::GetStudyTransportState() const {
+  return studyService == nullptr ? HrStudyTransportState::Off : studyService->TransportState();
+}
+
+void HeartRateController::RequestStudyStart() {
+  if (task != nullptr) {
+    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyStart);
+  }
+}
+
+void HeartRateController::RequestStudyStop() {
+  if (task != nullptr) {
+    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyStop);
+  }
+}
+
+void HeartRateController::RequestStudyFlush() {
+  if (task != nullptr) {
+    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyFlush);
+  }
+}
+
+void HeartRateController::RequestStudyIndicationComplete() {
+  if (task != nullptr) {
+    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyIndicationComplete);
+  }
+}
+#endif

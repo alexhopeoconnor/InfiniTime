@@ -48,6 +48,9 @@ namespace Pinetime {
         Utility::DirtyValue<bool> heartRateEnabled {};
         Utility::DirtyValue<bool> heartbeatRunning {};
         Utility::DirtyValue<uint32_t> heartRateAgeSeconds {};
+#ifdef ELIXIR_HR_STUDY
+        Utility::DirtyValue<Controllers::HrStudyTransportState> studyTransportState {};
+#endif
         HeartRateReadingStatus lastHeartRateStatus = HeartRateReadingStatus::Unavailable;
         HeartRateAcquisitionStatus lastHeartRateAcquisitionStatus = HeartRateAcquisitionStatus::Stopped;
         bool lastHeartRatePulsePhase = false;
