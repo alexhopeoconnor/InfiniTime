@@ -45,12 +45,15 @@ namespace Pinetime {
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::seconds>> currentDateTime {};
         Utility::DirtyValue<uint32_t> stepCount {};
         Utility::DirtyValue<uint8_t> heartbeat {};
+        Utility::DirtyValue<bool> heartRateEnabled {};
         Utility::DirtyValue<bool> heartbeatRunning {};
         Utility::DirtyValue<uint32_t> heartRateAgeSeconds {};
 #ifdef ELIXIR_HR_STUDY
         Utility::DirtyValue<Controllers::HrStudyTransportState> studyTransportState {};
 #endif
         HeartRateReadingStatus lastHeartRateStatus = HeartRateReadingStatus::Unavailable;
+        HeartRateAcquisitionStatus lastHeartRateAcquisitionStatus = HeartRateAcquisitionStatus::Stopped;
+        bool lastHeartRatePulsePhase = false;
         Utility::DirtyValue<bool> notificationState {};
         Utility::DirtyValue<std::chrono::time_point<std::chrono::system_clock, std::chrono::days>> currentDate;
 
@@ -61,9 +64,10 @@ namespace Pinetime {
         lv_obj_t* labelDate;
         lv_obj_t* batteryValue;
         lv_obj_t* stepValue;
+        lv_obj_t* heartRateRow;
+        lv_obj_t* heartbeatIcon;
         lv_obj_t* heartbeatValue;
         lv_obj_t* connectState;
-        lv_obj_t* labelPrompt2;
 
         Controllers::DateTime& dateTimeController;
         const Controllers::Battery& batteryController;

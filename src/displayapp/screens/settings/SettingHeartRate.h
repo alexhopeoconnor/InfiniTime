@@ -33,13 +33,13 @@ namespace Pinetime {
         Pinetime::Controllers::HeartRateController& heartRateController;
 
         static constexpr std::array<Option, 7> options = {{
-          {.intervalInSeconds = std::nullopt, .name = " Off"},
-          {.intervalInSeconds = 0, .name = "Cont"},
-          {.intervalInSeconds = 30, .name = " 30s"},
-          {.intervalInSeconds = 60, .name = "  1m"},
-          {.intervalInSeconds = 5 * 60, .name = "  5m"},
-          {.intervalInSeconds = 10 * 60, .name = " 10m"},
-          {.intervalInSeconds = 30 * 60, .name = " 30m"},
+          {.intervalInSeconds = std::nullopt, .name = "Off (hide)"},
+          {.intervalInSeconds = 0, .name = "Live"},
+          {.intervalInSeconds = 30, .name = "30 sec"},
+          {.intervalInSeconds = 60, .name = "1 min"},
+          {.intervalInSeconds = 5 * 60, .name = "5 min"},
+          {.intervalInSeconds = 10 * 60, .name = "10 min"},
+          {.intervalInSeconds = 30 * 60, .name = "30 min"},
         }};
 
         lv_obj_t* cbOption[options.size()];

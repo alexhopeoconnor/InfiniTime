@@ -39,6 +39,7 @@ namespace Pinetime::Controllers {
     Off,
     Buffering,
     Sending,
+    AwaitingAcknowledgement,
     Connected,
   };
 

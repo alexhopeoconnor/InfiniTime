@@ -35,33 +35,51 @@ WatchFaceTerminal::WatchFaceTerminal(Controllers::DateTime& dateTimeController,
   lv_obj_set_style_local_bg_opa(container, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_TRANSP);
 
   notificationIcon = lv_label_create(container, nullptr);
+  lv_obj_set_style_local_text_font(notificationIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
+  lv_obj_set_style_local_text_color(notificationIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
 
   labelPrompt1 = lv_label_create(container, nullptr);
+  lv_obj_set_style_local_text_font(labelPrompt1, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
   lv_obj_set_style_local_text_color(labelPrompt1, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
-  lv_label_set_text_static(labelPrompt1, "elixir@time:~ $ status");
+  lv_label_set_text_static(labelPrompt1, "elixir@time $");
 
   labelTime = lv_label_create(container, nullptr);
+  lv_obj_set_style_local_text_font(labelTime, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
   lv_label_set_recolor(labelTime, true);
 
   labelDate = lv_label_create(container, nullptr);
+  lv_obj_set_style_local_text_font(labelDate, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
   lv_label_set_recolor(labelDate, true);
 
   batteryValue = lv_label_create(container, nullptr);
+  lv_obj_set_style_local_text_font(batteryValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
   lv_label_set_recolor(batteryValue, true);
 
   stepValue = lv_label_create(container, nullptr);
+  lv_obj_set_style_local_text_font(stepValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
   lv_label_set_recolor(stepValue, true);
   lv_obj_set_style_local_text_color(stepValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
 
-  heartbeatValue = lv_label_create(container, nullptr);
-  lv_label_set_recolor(heartbeatValue, true);
+  heartRateRow = lv_cont_create(container, nullptr);
+  lv_cont_set_layout(heartRateRow, LV_LAYOUT_ROW_MID);
+  lv_cont_set_fit(heartRateRow, LV_FIT_TIGHT);
+  lv_obj_set_style_local_pad_left(heartRateRow, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, 0);
+  lv_obj_set_style_local_pad_right(heartRateRow, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, 0);
+  lv_obj_set_style_local_pad_top(heartRateRow, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, 0);
+  lv_obj_set_style_local_pad_bottom(heartRateRow, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, 0);
+  lv_obj_set_style_local_pad_inner(heartRateRow, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, 2);
+  lv_obj_set_style_local_bg_opa(heartRateRow, LV_CONT_PART_MAIN, LV_STATE_DEFAULT, LV_OPA_TRANSP);
+
+  heartbeatIcon = lv_label_create(heartRateRow, nullptr);
+  lv_obj_set_style_local_text_font(heartbeatIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
+  lv_label_set_text_static(heartbeatIcon, Symbols::heartBeat);
+
+  heartbeatValue = lv_label_create(heartRateRow, nullptr);
+  lv_obj_set_style_local_text_font(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
 
   connectState = lv_label_create(container, nullptr);
+  lv_obj_set_style_local_text_font(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, &jetbrains_mono_bold_20);
   lv_label_set_recolor(connectState, true);
-
-  labelPrompt2 = lv_label_create(container, nullptr);
-  lv_obj_set_style_local_text_color(labelPrompt2, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::lightGray);
-  lv_label_set_text_static(labelPrompt2, "elixir@time:~ $");
 
   lv_obj_align(container, nullptr, LV_ALIGN_IN_TOP_LEFT, 0, 7);
 
@@ -78,9 +96,10 @@ void WatchFaceTerminal::Refresh() {
   notificationState = notificationManager.AreNewNotificationsAvailable();
   if (notificationState.IsUpdated()) {
     if (notificationState.Get()) {
-      lv_label_set_text_static(notificationIcon, "[1]+ Notify");
+      lv_obj_set_hidden(notificationIcon, false);
+      lv_label_set_text_fmt(notificationIcon, "%s new", Symbols::bell);
     } else {
-      lv_label_set_text_static(notificationIcon, "");
+      lv_obj_set_hidden(notificationIcon, true);
     }
   }
 
@@ -100,9 +119,9 @@ void WatchFaceTerminal::Refresh() {
         hour = hour - 12;
         ampmChar[0] = 'P';
       }
-      lv_label_set_text_fmt(labelTime, "#ffffff [TIME]# #11cc55 %02d:%02d:%02d %s#", hour, minute, second, ampmChar);
+      lv_label_set_text_fmt(labelTime, "#ffffff %s# #11cc55 %02d:%02d:%02d %s#", Symbols::clock, hour, minute, second, ampmChar);
     } else {
-      lv_label_set_text_fmt(labelTime, "#ffffff [TIME]# #11cc55 %02d:%02d:%02d#", hour, minute, second);
+      lv_label_set_text_fmt(labelTime, "#ffffff %s# #11cc55 %02d:%02d:%02d#", Symbols::clock, hour, minute, second);
     }
 
     currentDate = std::chrono::time_point_cast<std::chrono::days>(currentDateTime.Get());
@@ -110,52 +129,108 @@ void WatchFaceTerminal::Refresh() {
       uint16_t year = dateTimeController.Year();
       Controllers::DateTime::Months month = dateTimeController.Month();
       uint8_t day = dateTimeController.Day();
-      lv_label_set_text_fmt(labelDate, "#ffffff [DATE]# #007fff %04d-%02d-%02d#", year, month, day);
+      lv_label_set_text_fmt(labelDate, "#ffffff %s# #007fff %04d-%02d-%02d#", Symbols::calendar, year, month, day);
     }
   }
 
-  powerPresent = batteryController.IsPowerPresent();
+  const bool isPowerPresent = batteryController.IsPowerPresent();
+  powerPresent = isPowerPresent;
+  const bool powerPresentChanged = powerPresent.IsUpdated();
   batteryPercentRemaining = batteryController.PercentRemaining();
-  if (batteryPercentRemaining.IsUpdated() || powerPresent.IsUpdated()) {
+  if (batteryPercentRemaining.IsUpdated() || powerPresentChanged) {
     lv_obj_set_style_local_text_color(batteryValue,
                                       LV_LABEL_PART_MAIN,
                                       LV_STATE_DEFAULT,
                                       BatteryIcon::ColorFromPercentage(batteryPercentRemaining.Get()));
-    lv_label_set_text_fmt(batteryValue, "#ffffff [BATT]# %d%%", batteryPercentRemaining.Get());
     if (batteryController.IsCharging()) {
-      lv_label_ins_text(batteryValue, LV_LABEL_POS_LAST, " Charging");
+      lv_label_set_text_fmt(batteryValue,
+                            "#ffffff %s# %d%% %s",
+                            Symbols::batteryHalf,
+                            batteryPercentRemaining.Get(),
+                            Symbols::plug);
+    } else {
+      lv_label_set_text_fmt(batteryValue, "#ffffff %s# %d%%", Symbols::batteryHalf, batteryPercentRemaining.Get());
     }
   }
 
   stepCount = motionController.NbSteps();
   if (stepCount.IsUpdated()) {
-    lv_label_set_text_fmt(stepValue, "#ffffff [STEP]# %lu steps", stepCount.Get());
+    lv_label_set_text_fmt(stepValue, "#ffffff %s# %lu", Symbols::shoe, stepCount.Get());
   }
 
-  heartbeat = heartRateController.HeartRate();
-  heartbeatRunning = GetHeartRateMeasurementMode(heartRateController) != HeartRateMeasurementMode::Idle;
-  const auto now = xTaskGetTickCount();
-  heartRateAgeSeconds = LastHeartRateAgeSeconds(heartRateController, now);
-  const auto heartRateStatus = GetHeartRateReadingStatus(heartRateController, now);
-  if (heartbeat.IsUpdated() || heartbeatRunning.IsUpdated() || heartRateAgeSeconds.IsUpdated() || heartRateStatus != lastHeartRateStatus) {
-    lastHeartRateStatus = heartRateStatus;
-    switch (heartRateStatus) {
-      case HeartRateReadingStatus::Fresh:
-        lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::deepOrange);
-        lv_label_set_text_fmt(heartbeatValue, "#ffffff [L_HR]# %d bpm", heartbeat.Get());
-        break;
-      case HeartRateReadingStatus::Stale:
-        lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
-        lv_label_set_text_fmt(heartbeatValue,
-                              "#ffffff [L_HR]# ~%d bpm, %lus ago",
-                              heartbeat.Get(),
-                              heartRateAgeSeconds.Get());
-        break;
-      case HeartRateReadingStatus::Unavailable:
-        lv_label_set_text_static(heartbeatValue,
-                                 heartbeatRunning.Get() ? "#ffffff [L_HR]# acquiring signal" : "#ffffff [L_HR]# ---");
+  heartRateEnabled = settingsController.GetHeartRateBackgroundMeasurementInterval().has_value();
+  const bool heartRateEnabledChanged = heartRateEnabled.IsUpdated();
+  if (heartRateEnabledChanged) {
+    lv_obj_set_hidden(heartRateRow, !heartRateEnabled.Get());
+  }
+  if (heartRateEnabled.Get()) {
+    if (isPowerPresent) {
+      if (heartRateEnabledChanged || powerPresentChanged) {
+        lv_obj_set_style_local_text_color(heartbeatIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::gray);
         lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::gray);
-        break;
+        lv_label_set_text_static(heartbeatValue, Symbols::plug);
+        lastHeartRateAcquisitionStatus = HeartRateAcquisitionStatus::Stopped;
+        lastHeartRatePulsePhase = false;
+      }
+    } else {
+      heartbeat = heartRateController.HeartRate();
+      heartbeatRunning = heartRateController.State() != Controllers::HeartRateController::States::Stopped;
+      const auto now = xTaskGetTickCount();
+      heartRateAgeSeconds = LastHeartRateAgeSeconds(heartRateController, now);
+      const auto heartRateStatus = GetHeartRateReadingStatus(heartRateController, now);
+      const auto acquisitionStatus = GetHeartRateAcquisitionStatus(heartRateController);
+      const bool activeAcquisitionIsDegraded = acquisitionStatus != HeartRateAcquisitionStatus::Stopped &&
+                                               acquisitionStatus != HeartRateAcquisitionStatus::Running;
+      const bool heartRatePulsePhase = acquisitionStatus == HeartRateAcquisitionStatus::Acquiring &&
+                                       ((now / pdMS_TO_TICKS(300)) % 2 == 0);
+      const auto displayPreviousHeartRate = [&] {
+        const auto age = heartRateAgeSeconds.Get();
+        if (heartbeat.Get() == 0) {
+          lv_label_set_text_static(heartbeatValue, "?");
+        } else {
+          lv_label_set_text_fmt(heartbeatValue, "~%d %02lu:%02lu", heartbeat.Get(), age / 60, age % 60);
+        }
+      };
+      if (heartRateEnabledChanged || powerPresentChanged || heartbeat.IsUpdated() || heartbeatRunning.IsUpdated() ||
+          heartRateAgeSeconds.IsUpdated() || heartRateStatus != lastHeartRateStatus ||
+          acquisitionStatus != lastHeartRateAcquisitionStatus || heartRatePulsePhase != lastHeartRatePulsePhase) {
+        lastHeartRateStatus = heartRateStatus;
+        lastHeartRateAcquisitionStatus = acquisitionStatus;
+        lastHeartRatePulsePhase = heartRatePulsePhase;
+
+        if (acquisitionStatus == HeartRateAcquisitionStatus::Acquiring) {
+          // This is an activity indicator, not a simulated physiological
+          // heartbeat. The HRS3300 path does not expose individual beat timing.
+          lv_obj_set_style_local_text_color(heartbeatIcon,
+                                            LV_LABEL_PART_MAIN,
+                                            LV_STATE_DEFAULT,
+                                            heartRatePulsePhase ? Colors::deepOrange : Colors::orange);
+          lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
+          displayPreviousHeartRate();
+        } else if (activeAcquisitionIsDegraded) {
+          lv_obj_set_style_local_text_color(heartbeatIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
+          lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
+          displayPreviousHeartRate();
+        } else {
+          switch (heartRateStatus) {
+            case HeartRateReadingStatus::Fresh:
+              lv_obj_set_style_local_text_color(heartbeatIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::green);
+              lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::green);
+              lv_label_set_text_fmt(heartbeatValue, "%d", heartbeat.Get());
+              break;
+            case HeartRateReadingStatus::Stale:
+              lv_obj_set_style_local_text_color(heartbeatIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
+              lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
+              displayPreviousHeartRate();
+              break;
+            case HeartRateReadingStatus::Unavailable:
+              lv_obj_set_style_local_text_color(heartbeatIcon, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::gray);
+              lv_obj_set_style_local_text_color(heartbeatValue, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::gray);
+              lv_label_set_text_static(heartbeatValue, heartbeatRunning.Get() ? "..." : "--");
+              break;
+          }
+        }
+      }
     }
   }
 
@@ -180,6 +255,10 @@ void WatchFaceTerminal::Refresh() {
         lv_label_set_text_fmt(connectState, "#ffffff %s# tx", Symbols::bluetooth);
         lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::blue);
         return;
+      case Controllers::HrStudyTransportState::AwaitingAcknowledgement:
+        lv_label_set_text_fmt(connectState, "#ffffff %s# ack", Symbols::bluetooth);
+        lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::blue);
+        return;
       case Controllers::HrStudyTransportState::Connected:
         lv_label_set_text_fmt(connectState, "#ffffff %s# ok", Symbols::bluetooth);
         lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::green);
@@ -189,14 +268,14 @@ void WatchFaceTerminal::Refresh() {
     }
 #endif
     if (!bleRadioEnabled.Get()) {
-      lv_label_set_text_static(connectState, "#ffffff [LINK]# Disabled");
+      lv_label_set_text_fmt(connectState, "#ffffff %s# off", Symbols::bluetooth);
       lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::gray);
     } else {
       if (bleState.Get()) {
-        lv_label_set_text_static(connectState, "#ffffff [LINK]# Connected");
+        lv_label_set_text_fmt(connectState, "#ffffff %s# on", Symbols::bluetooth);
         lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::blue);
       } else {
-        lv_label_set_text_static(connectState, "#ffffff [LINK]# Disconnected");
+        lv_label_set_text_fmt(connectState, "#ffffff %s# --", Symbols::bluetooth);
         lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::gray);
       }
     }

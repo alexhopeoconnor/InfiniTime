@@ -22,17 +22,7 @@ namespace Pinetime {
 #endif
     class HeartRateController {
     public:
-      enum class States : uint8_t {
-        Disabled,
-        Stopped,
-        NotEnoughData,
-        Searching,
-        Measuring,
-        NoTouch,
-        SignalUnstable,
-        AmbientLight,
-        SensorError,
-      };
+      enum class States : uint8_t { Stopped, NotEnoughData, NoTouch, SignalUnstable, AmbientLight, SensorError, Running };
       enum class MeasurementMode : uint8_t { Idle, Background, Foreground };
       enum class ReadingStatus : uint8_t { Unavailable, Fresh, Stale };
 
@@ -40,8 +30,7 @@ namespace Pinetime {
       void Enable();
       void Disable();
       void OnBackgroundSettingsChanged();
-      void UpdateState(States newState);
-      void UpdateHeartRate(uint8_t heartRate);
+      void Update(States newState, uint8_t heartRate);
       void SetMeasurementMode(MeasurementMode newMode);
 
       void SetHeartRateTask(Applications::HeartRateTask* task);
@@ -70,7 +59,7 @@ namespace Pinetime {
         if (!hasValidHeartRate) {
           return 0;
         }
-        return (static_cast<uint64_t>(now - lastValidHeartRateTick) * portTICK_PERIOD_MS) / 1000;
+        return (static_cast<uint64_t>(now - lastValidHeartRateTick) * 1000ULL) / configTICK_RATE_HZ;
       }
 
       ReadingStatus GetReadingStatus(TickType_t now) const {
@@ -97,12 +86,12 @@ namespace Pinetime {
       void RequestStudyStart();
       void RequestStudyStop();
       void RequestStudyFlush();
-      void RequestStudyIndicationComplete();
+      void RequestStudyAcknowledgement();
 #endif
 
     private:
       Applications::HeartRateTask* task = nullptr;
-      States state = States::Disabled;
+      States state = States::Stopped;
       MeasurementMode measurementMode = MeasurementMode::Idle;
       uint8_t heartRate = 0;
       bool hasValidHeartRate = false;

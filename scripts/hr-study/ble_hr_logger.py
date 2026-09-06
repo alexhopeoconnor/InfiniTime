@@ -12,8 +12,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -29,9 +31,15 @@ STUDY_CONTROL = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e402"
 STUDY_RECORD = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e403"
 STUDY_START = b"\x01"
 STUDY_STOP = b"\x02"
+STUDY_FLUSH = b"\x03"
+STUDY_ACKNOWLEDGE = b"\x04"
 RECONNECT_DELAY_SECONDS = 15.0
+DEFAULT_RETURN_GRACE_SECONDS = 15 * 60
+DRAIN_QUIESCENCE_SECONDS = 1.0
+DRAIN_TIMEOUT_SECONDS = 20.0
 RECORD_STRUCT = struct.Struct("<IIHHHBBBBBB")
-SCHEMA_VERSION = 1
+ACK_STRUCT = struct.Struct("<BI")
+SCHEMA_VERSION = 2
 
 OUTCOMES = {
     1: "accepted",
@@ -59,6 +67,10 @@ class JsonlWriter:
       event["arrival_utc"] = timestamp
     self._file.write(json.dumps(event, separators=(",", ":"), sort_keys=True) + "\n")
     self._file.flush()
+    # The watch keeps its FIFO entry until the recorder ACKs its sequence.
+    # A Python flush alone only reaches the kernel page cache; force it to
+    # storage before an acknowledgement can be sent for this event.
+    os.fsync(self._file.fileno())
 
   def close(self) -> None:
     self._file.close()
@@ -125,11 +137,74 @@ def make_disconnect_callback(
   return on_disconnect
 
 
-async def record(address: str, adapter: str, duration_seconds: int, output: Path, label: str, algorithm: str) -> int:
+async def acknowledge_records(
+    client: BleakClient,
+    acknowledgements: asyncio.Queue[int],
+    writer: JsonlWriter,
+    attempt: int,
+    disconnected: asyncio.Event,
+) -> None:
+  """Acknowledge only records that have been synchronously flushed to JSONL."""
+
+  while True:
+    sequence = await acknowledgements.get()
+    try:
+      await client.write_gatt_char(STUDY_CONTROL, ACK_STRUCT.pack(STUDY_ACKNOWLEDGE[0], sequence), response=True)
+      writer.write({"event": "record_acknowledged", "attempt": attempt, "sequence": sequence})
+    except asyncio.CancelledError:
+      raise
+    except Exception as error:
+      writer.write(
+          {
+              "event": "record_ack_error",
+              "attempt": attempt,
+              "sequence": sequence,
+              "error": f"{type(error).__name__}: {error}",
+          }
+      )
+      disconnected.set()
+      return
+    finally:
+      acknowledgements.task_done()
+
+
+async def wait_for_durable_drain(
+    acknowledgements: asyncio.Queue[int], last_record_at: dict[str, float]
+) -> bool:
+  """Wait until acknowledgements are durable and no flushed record arrives.
+
+  A study FLUSH releases one indication at a time; the watch sends the next
+  only after its predecessor is acknowledged. A short quiet period after the
+  ACK queue drains therefore proves the currently buffered FIFO has emptied
+  without inventing a second protocol message solely for test-session stop.
+  """
+
+  deadline = monotonic() + DRAIN_TIMEOUT_SECONDS
+  while monotonic() < deadline:
+    try:
+      await asyncio.wait_for(acknowledgements.join(), timeout=0.25)
+    except asyncio.TimeoutError:
+      continue
+    if monotonic() - last_record_at["value"] >= DRAIN_QUIESCENCE_SECONDS:
+      return True
+    await asyncio.sleep(0.05)
+  return False
+
+
+async def record(
+    address: str,
+    adapter: str,
+    duration_seconds: int,
+    return_grace_seconds: int,
+    output: Path,
+    label: str,
+    algorithm: str,
+) -> int:
   output.parent.mkdir(parents=True, exist_ok=True)
   writer = JsonlWriter(output)
   started = monotonic()
-  deadline = started + duration_seconds
+  collection_deadline = started + duration_seconds
+  recovery_deadline = collection_deadline + return_grace_seconds
   connection_attempts = 0
   connection_losses = 0
   ever_connected = False
@@ -139,6 +214,22 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
   recovered_records = 0
   duplicate_records = 0
   seen_sequences: set[int] = set()
+  collection_complete = False
+  target_elapsed_logged = False
+
+  def mark_target_elapsed(stage: str) -> None:
+    nonlocal target_elapsed_logged
+    if target_elapsed_logged:
+      return
+    target_elapsed_logged = True
+    writer.write(
+        {
+            "event": "collection_target_elapsed",
+            "stage": stage,
+            "target_duration_seconds": duration_seconds,
+            "return_grace_seconds": return_grace_seconds,
+        }
+    )
 
   writer.write(
       {
@@ -147,6 +238,7 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
           "address": address,
           "adapter": adapter,
           "duration_seconds": duration_seconds,
+          "return_grace_seconds": return_grace_seconds,
           "label": label,
           "algorithm": algorithm,
           "watch_tick_hz": 1024,
@@ -156,16 +248,22 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
   )
 
   try:
-    while (remaining_seconds := deadline - monotonic()) > 0:
+    while (remaining_recovery_seconds := recovery_deadline - monotonic()) > 0:
       connection_attempts += 1
       attempt = connection_attempts
+      target_elapsed = monotonic() >= collection_deadline
+      if target_elapsed:
+        mark_target_elapsed("awaiting_reconnect")
       disconnected = asyncio.Event()
       intentional = {"value": False}
       loss_logged = {"value": False}
       connected = False
       subscribed = False
       client: BleakClient | None = None
+      acknowledgements: asyncio.Queue[int] = asyncio.Queue()
+      acknowledgement_task: asyncio.Task[None] | None = None
       recovered_connection = ever_connected
+      last_record_at = {"value": monotonic()}
 
       def on_loss() -> None:
         nonlocal connection_losses
@@ -173,12 +271,16 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
 
       def on_record(_: int, packet: bytearray) -> None:
         nonlocal received_records, accepted_records, recovered_records, duplicate_records
+        last_record_at["value"] = monotonic()
         try:
           decoded = decode_record(packet)
           sequence = int(decoded["sequence"])
           if sequence in seen_sequences:
             duplicate_records += 1
             writer.write({"event": "duplicate_record", "attempt": attempt, **decoded})
+            # The original JSONL write completed in an earlier connection; an
+            # ACK may have been lost with that link, so acknowledge the retry.
+            acknowledgements.put_nowait(sequence)
             return
           seen_sequences.add(sequence)
           received_records += 1
@@ -195,6 +297,10 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
                   **decoded,
               }
           )
+          # JsonlWriter.write() flushes before this queue entry is visible to
+          # the ACK worker. The watch will keep the front record until this
+          # write-with-response succeeds.
+          acknowledgements.put_nowait(sequence)
         except Exception as error:  # Do not let a malformed test packet kill BlueZ callbacks.
           writer.write({"event": "decode_error", "attempt": attempt, "packet_hex": packet.hex(), "error": str(error)})
 
@@ -204,24 +310,54 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
             bluez_device(address, adapter),
             disconnected_callback=make_disconnect_callback(attempt, intentional, loss_logged, disconnected, writer, on_loss),
         )
-        await client.connect(timeout=min(20.0, remaining_seconds))
+        await client.connect(timeout=min(20.0, remaining_recovery_seconds))
         connected = True
         ever_connected = True
         writer.write({"event": "connected", "attempt": attempt})
+        acknowledgement_task = asyncio.create_task(
+            acknowledge_records(client, acknowledgements, writer, attempt, disconnected)
+        )
 
         await client.start_notify(STUDY_RECORD, on_record)
         subscribed = True
         writer.write({"event": "indications_subscribed", "attempt": attempt})
 
+        target_elapsed = monotonic() >= collection_deadline
         if not study_started:
+          if target_elapsed:
+            mark_target_elapsed("collection_never_started")
+            return 1
           await client.write_gatt_char(STUDY_CONTROL, STUDY_START, response=True)
           study_started = True
           writer.write({"event": "study_started", "attempt": attempt})
+        else:
+          # The watch intentionally does not drain merely because BlueZ
+          # updated the CCCD. This request happens only after the callback and
+          # durable-ACK worker are ready for recovered indications.
+          await client.write_gatt_char(STUDY_CONTROL, STUDY_FLUSH, response=True)
+          writer.write({"event": "study_flush_requested", "attempt": attempt})
+
+        if target_elapsed:
+          mark_target_elapsed("reconnected_for_drain")
+          drained = await wait_for_durable_drain(acknowledgements, last_record_at)
+          writer.write({"event": "soft_end_drain", "attempt": attempt, "drained": drained})
+          await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
+          study_started = False
+          collection_complete = True
+          writer.write({"event": "study_stopped", "attempt": attempt})
+          return 0
 
         try:
-          await asyncio.wait_for(disconnected.wait(), timeout=max(0.0, deadline - monotonic()))
+          await asyncio.wait_for(disconnected.wait(), timeout=max(0.0, collection_deadline - monotonic()))
         except asyncio.TimeoutError:
-          break
+          mark_target_elapsed("connected_at_target")
+          drained = await wait_for_durable_drain(acknowledgements, last_record_at)
+          writer.write({"event": "soft_end_drain", "attempt": attempt, "drained": drained})
+          await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
+          study_started = False
+          collection_complete = True
+          writer.write({"event": "study_stopped", "attempt": attempt})
+          return 0
       except Exception as error:
         event = "subscribe_error" if connected else "connect_error"
         writer.write({"event": event, "attempt": attempt, "error": f"{type(error).__name__}: {error}"})
@@ -230,9 +366,6 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
         if client is not None and client.is_connected:
           if subscribed:
             try:
-              if study_started and deadline - monotonic() <= 0:
-                await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
-                writer.write({"event": "study_stopped", "attempt": attempt})
               await client.stop_notify(STUDY_RECORD)
               writer.write({"event": "indications_unsubscribed", "attempt": attempt})
             except Exception as error:
@@ -242,13 +375,17 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
             writer.write({"event": "disconnected", "attempt": attempt})
           except Exception as error:
             writer.write({"event": "disconnect_error", "attempt": attempt, "error": f"{type(error).__name__}: {error}"})
+        if acknowledgement_task is not None:
+          acknowledgement_task.cancel()
+          with contextlib.suppress(asyncio.CancelledError):
+            await acknowledgement_task
 
-      remaining_seconds = deadline - monotonic()
-      if remaining_seconds > 0:
-        retry_delay = min(RECONNECT_DELAY_SECONDS, remaining_seconds)
+      remaining_recovery_seconds = recovery_deadline - monotonic()
+      if remaining_recovery_seconds > 0:
+        retry_delay = min(RECONNECT_DELAY_SECONDS, remaining_recovery_seconds)
         writer.write({"event": "reconnect_wait", "seconds": round(retry_delay, 3)})
         await asyncio.sleep(retry_delay)
-    return 0 if ever_connected else 1
+    return 0 if collection_complete else 1
   finally:
     writer.write(
         {
@@ -260,6 +397,10 @@ async def record(address: str, adapter: str, duration_seconds: int, output: Path
             "duplicate_records": duplicate_records,
             "connection_attempts": connection_attempts,
             "connection_losses": connection_losses,
+            "target_duration_seconds": duration_seconds,
+            "return_grace_seconds": return_grace_seconds,
+            "collection_complete": collection_complete,
+            "recovery_grace_expired": not collection_complete and monotonic() >= recovery_deadline,
         }
     )
     writer.close()
@@ -272,6 +413,12 @@ def parse_args() -> argparse.Namespace:
   record_parser.add_argument("--address", required=True, help="existing BlueZ-paired device address")
   record_parser.add_argument("--adapter", default="hci0", help="BlueZ adapter that owns the paired device")
   record_parser.add_argument("--duration", type=int, required=True, help="bounded recording duration in seconds")
+  record_parser.add_argument(
+      "--return-grace",
+      type=int,
+      default=DEFAULT_RETURN_GRACE_SECONDS,
+      help="seconds to keep reconnecting after the target duration (default: 900)",
+  )
   record_parser.add_argument("--out", type=Path, required=True, help="new JSONL output path")
   record_parser.add_argument("--label", required=True, help="human-readable session label")
   record_parser.add_argument("--algorithm", required=True, choices=("baseline", "ppgv2"), help="firmware estimator under test")
@@ -283,7 +430,12 @@ def main() -> int:
   if args.duration <= 0:
     print("--duration must be positive", file=sys.stderr)
     return 2
-  return asyncio.run(record(args.address, args.adapter, args.duration, args.out, args.label, args.algorithm))
+  if args.return_grace < 0:
+    print("--return-grace must be zero or positive", file=sys.stderr)
+    return 2
+  return asyncio.run(
+      record(args.address, args.adapter, args.duration, args.return_grace, args.out, args.label, args.algorithm)
+  )
 
 
 if __name__ == "__main__":

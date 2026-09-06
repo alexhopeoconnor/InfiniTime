@@ -6,7 +6,7 @@ tag, with `upstream` kept as the official repository remote.
 
 The device continues to use the established InfiniTime BLE device identity for
 phone compatibility. Its standard Device Information **software revision** is
-`ElixirTime`, while its firmware revision is `1.16.3`; the Terminal watch face
+`ElixirTime`, while its firmware revision is `1.16.9`; the Terminal watch face
 identifies the customised firmware as `elixir@time`. These independent,
 visible identifiers make a successful custom flash distinguishable from an
 upstream `1.16.1` image.
@@ -17,7 +17,8 @@ ElixirTime builds these user-facing features:
 
 - The Terminal watch face only. Existing settings may name an upstream face,
   but the app safely falls back to Terminal without rewriting persisted data.
-- Alarm, timer, stopwatch, steps, and the heart-rate screen.
+- Alarm, timer, stopwatch, steps, and background heart-rate sampling managed
+  from Settings.
 - Notifications, time synchronisation, standard OTA DFU, the file service,
   flashlight, battery information, firmware validation, and all core settings.
 
@@ -44,26 +45,47 @@ now treated as an invalid estimate, not as a physiological zero. The most
 recent verified reading is retained and classified as:
 
 - **fresh** for 30 seconds;
-- **stale** for the following 90 seconds, visibly marked with `~` and an age;
+- **stale** for the following 90 seconds, visibly marked with `~` and an age
+  that advances once per second while the face is awake;
 - **unavailable** after two minutes, or before the first valid reading.
 
 This is a display/data-quality improvement, not a claim of clinical accuracy.
 The PPG implementation already averages consecutive valid spectra. ElixirTime
 arms a selected background interval immediately at boot or when it changes in
-Settings; it no longer needs a manually started initial measurement. The
-heart-rate screen labels a scheduled acquisition as an **Auto sample** and
-does not hold the display awake; `Measure now` requests an immediate,
-screen-on foreground measurement instead.
+Settings; it no longer needs a manually started initial measurement. `Settings
+-> Heart rate` is the sole control surface: choose a sampling interval, `Live`,
+or `Off (hide)`. The latter stops automatic sampling and removes the heart-rate
+row from the Terminal face. There is no foreground heart-rate app or manual
+start action.
+
+Heart-rate acquisition is suspended whenever external power is present. This
+uses the cradle-presence signal rather than the transient charging-current
+signal, so it remains disabled after the battery reaches 100%. Docking stops
+an active acquisition immediately; undocking begins a fresh configured
+interval. The Terminal heart row is icon-led: a green heart means a fresh
+reading; amber means stale or a degraded signal; a slow amber/orange pulse
+means a real optical acquisition is active; grey means unavailable; and a grey
+heart followed by the plug glyph means the cradle has suspended measurement.
+The pulse is deliberately an acquisition indicator, never a simulated
+physiological heartbeat. The row preserves the latest valid value as `~BPM`
+with its age, or uses short `...`, `?`, and `--` states rather than verbose
+labels.
 
 The screen reports the acquisition condition rather than calling every failure
 "not enough data": it distinguishes initial acquisition, unstable optical
 signal, excessive ambient light, and an HRS3300 communication failure. A
 scheduled sample has a 30-second attempt window. Intervals longer than that
 retain their start-to-start cadence; a failed 30-second sample waits for the
-next interval instead of restarting continuously. `Cont` deliberately keeps
+next interval instead of restarting continuously. `Live` deliberately keeps
 sampling until it is changed to another option or Off. The firmware retains
 only the latest verified value and its age; it does **not** yet maintain a
 heart-rate history.
+
+The Terminal face uses the built-in compact icon glyphs rather than long
+`[LABEL]` prefixes. Its single top prompt and abbreviated status rows reserve
+several display lines for future watch-local information. No Home Assistant
+mode or multi-press button gesture is implemented yet: those need a defined
+on-watch state model and remain outside the current firmware scope.
 
 ## Temporary HR comparison builds
 
@@ -77,22 +99,33 @@ accepted BPM or failure reason, PPG mean/range, compact accelerometer/step and
 ambient context, power/mode flags, and a watch tick. It deliberately sends no
 raw optical samples.
 
-The HR task stores at most 128 such records in RAM. It retains the oldest one
-until the paired desktop confirms its normal BLE indication; walking away from
-the PC therefore buffers completed windows and returning resubscribes and
-flushes the cache. The standard Bluetooth Heart Rate Service remains live-only
-and never replays cached values as if they were current. A reboot, power loss,
-or ring-buffer overflow loses pending study records by design.
+The HR task stores at most 128 such records in RAM. A normal BLE indication
+confirmation only proves the desktop Bluetooth stack received a packet, so it
+does not remove the oldest record. The Docker logger flushes and `fsync`s its
+JSONL entry, then explicitly acknowledges that sequence; only then does the
+watch discard it. Walking away therefore buffers completed windows; on return the logger
+subscribes, then explicitly requests a flush after its durable-ACK handler is
+ready. The standard Bluetooth Heart Rate Service remains live-only and never
+replays cached values as if they were current. A reboot, power loss, or
+ring-buffer overflow loses pending study records by design.
+
+The recorder's duration is a collection target. If the watch is out of range
+at that point, its default 15-minute return grace keeps the Docker recorder
+alive to reconnect, flush the FIFO, and send `STOP` when the wearer returns.
+The watch necessarily continues capturing until that stop arrives, so delayed
+returns can add post-target records; use a 20- or 30-minute target for normal
+wear rather than treating 12 minutes as an appointment.
 
 During an active study the Terminal Bluetooth row makes this visible without
 adding a new screen: amber `buf` means the watch is collecting while the
-desktop is absent, blue `tx` means one indication is awaiting confirmation,
-and green `ok` means the most recent record was confirmed. The code and its
-Docker-only recorder are documented in
+desktop is absent, blue `tx` / `ack` means an indication or host
+acknowledgement is pending, and green `ok` means no record awaits host
+acknowledgement. The code and its Docker-only recorder are documented in
 [`scripts/hr-study/README.md`](../scripts/hr-study/README.md). The launcher is
 the sole approved automated time sync: it starts the restricted DFU-only ITD
 daemon, runs one explicit `itctl set time now`, stops that daemon, and only
 then starts the recorder. It can be made non-mutating with `--no-sync-time`.
+
 ## First upgrade and recovery checklist
 
 The device inspected before this project was running InfiniTime `1.14.1`, but
@@ -109,13 +142,25 @@ The inspected saved setting had this mode disabled. In 1.16.x that setting
 also gates the DFU and file-system BLE services, so it must be enabled once
 from the watch. Do not remove the OTA setting from ElixirTime.
 
+InfiniTime's application clock is initialised from a build-time placeholder
+after an application reboot; it needs an explicit BLE Current Time sync from a
+phone companion or the bounded desktop tooling. The DFU-only desktop daemon
+intentionally never syncs time as a side effect of a flash. The heart-rate
+study launcher performs one explicit host-local time and timezone sync before
+a normal test session, then stops that daemon before recording begins. This is
+the appropriate place for that write; ordinary DFU and diagnostic sessions
+must remain non-mutating.
+
 For a first installation, keep a known-good upstream `.zip` and use the
 normal application DFU route. Do not send a custom build until all of these
 are true:
 
 1. The application and recovery targets build successfully.
 2. The generated DFU archive has been inspected and its checksum recorded.
-3. The phone/desktop DFU client can see the watch and has enough battery.
+3. The watch is seated securely on its charging dock; the phone/desktop DFU
+   client can see it and it has enough battery. Do not begin or continue the
+   long BLE transfer while it is off the dock, where movement can break the
+   connection.
 4. A recovery route is available if the app does not boot.
 
 The included charging cable supplies power only; it is not a USB data, serial,
@@ -133,25 +178,6 @@ states above are the safe diagnostic aid in normal firmware. See [SWD](SWD.md).
 The normal long-term companion is the phone, not this development computer.
 Use a desktop BLE connection only for a short, explicit diagnostic or DFU
 session, and disconnect it afterwards so the phone can reconnect.
-
-### Containerised heart-rate study capture
-
-[`scripts/hr-study`](../scripts/hr-study) is the bounded comparison recorder
-for this research branch. With `ELIXIR_HR_STUDY=ON`, it subscribes to the
-private indication service, starts one explicitly bounded session, and writes
-one JSONL record per completed measurement window. It neither scans nor pairs,
-opens a network listener, or acts as a persistent companion. The normal Heart
-Rate Service stays live-only; the private service carries only the temporary
-window summaries and buffers them across desktop range loss.
-
-Its Python environment exists only in a local Docker image. Runtime networking
-is disabled; the container uses the already-paired watch through a mounted
-BlueZ system D-Bus socket, has no Linux capabilities, and disconnects when the
-bounded session ends. Docker's default AppArmor profile blocks that explicitly
-mounted D-Bus use, so the recorder disables only that container profile; it
-does not use privileged mode, host networking, raw HCI access, or host Python.
-See the tool README for the one-command recording, reconnect behaviour, and
-outcome-based comparison workflow.
 
 [ITD](https://git.elara.ws/Elara6331/itd) and its `itctl` command are useful
 Linux diagnostics: they can read battery, heart rate, steps, and motion, set
@@ -186,7 +212,7 @@ enabled = false
 enabled = false
 ```
 
-The local checkout at `/home/alex/Documents/Projects/public/embedded/itd`
+The sibling checkout at `../itd` (relative to the InfiniTime repository root)
 contains a small reviewed branch, `elixir-dfu-only` at `922aa5a` (on top of
 upstream `b79806e`). Its `ELIXIR_DFU_ONLY=1` mode deliberately starts only the
 Bluetooth connection and local control socket. It does **not** relay desktop
@@ -201,7 +227,7 @@ service. If `/tmp/elixir-itd` has been cleared, rebuild from the reviewed
 checkout (the Go module and build caches may also remain in `/tmp`):
 
 ```sh
-itd_root=/home/alex/Documents/Projects/public/embedded/itd
+itd_root="$(cd ../itd && pwd)"
 cd "$itd_root"
 git switch elixir-dfu-only
 mkdir -p /tmp/elixir-itd
@@ -233,12 +259,16 @@ The current known-good workflow is:
 
 ```sh
 # On the watch first: Settings -> Over-the-air -> Firmware & files -> Enabled.
+# Keep the watch seated securely on its charging dock for the entire transfer.
 # Phone Bluetooth off; the PineTime is paired with this PC.
 
-itd_root=/home/alex/Documents/Projects/public/embedded/itd
+itd_root="$(cd ../itd && pwd)"
 itd_run=/tmp/elixir-itd
 itd_cfg=/tmp/elixir-itd-config
-archive="/home/alex/Documents/Projects/public/embedded/InfiniTime/build/output/pinetime-mcuboot-app-dfu-1.16.2.zip"
+# Use the same build directory passed as BUILD_DIR to the container build.
+version="$(sed -nE 's/^project\(pinetime VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p' CMakeLists.txt)"
+build_dir="$PWD/build/ui-${version}"
+archive="$build_dir/src/pinetime-mcuboot-app-dfu-${version}.zip"
 
 mkdir -p "$itd_run" "$itd_cfg/itd"
 cp doc/itd-dfu-only.toml "$itd_cfg/itd/itd.toml"

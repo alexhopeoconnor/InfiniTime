@@ -5,18 +5,25 @@ dedicated firmware build (`-DELIXIR_HR_STUDY=ON`) exposes a private,
 unadvertised GATT service only to the already-paired desktop while a bounded
 study is in progress. Normal ElixirTime builds do not contain this service.
 
-The service has an encrypted `START` / `STOP` control characteristic and a
-20-byte indication-only record characteristic. Each record represents one
-completed HR measurement window: accepted BPM or a reason it failed, PPG
-summary, compact motion/step/ambient context, and the watch tick. It is never
-raw PPG and is never a replacement for the standard live Heart Rate Service.
+The service has an encrypted control characteristic (`START`, `STOP`, `FLUSH`,
+and a compact sequence `ACK`) plus a 20-byte indication-only record
+characteristic. Each record represents one completed HR measurement window:
+accepted BPM or a reason it failed, PPG summary, compact motion/step/ambient
+context, and the watch tick. It is never raw PPG and is never a replacement
+for the standard live Heart Rate Service.
 
-The watch keeps 128 records in RAM. It removes a record only after the normal
-BLE indication confirmation arrives. If the desktop goes out of range, the
-watch changes its Terminal Bluetooth row to amber `buf`, keeps recording, and
-flushes on the next subscription. Blue `tx` means an indication is in flight;
-green `ok` means the most recent record was confirmed. Power loss, a reboot,
-or more than 128 completed windows discards unflushed RAM records.
+The watch keeps 128 records in RAM. A BLE indication confirmation only proves
+that BlueZ received a packet, so it does **not** discard the record. The
+Docker logger flushes and `fsync`s the JSONL row, then writes
+`ACK(sequence)`; only
+that matching acknowledgement removes the front record. On reconnect the
+logger subscribes, then explicitly requests `FLUSH` once its callback and ACK
+worker are ready. A retry may therefore repeat a sequence, which the logger
+deduplicates while still acknowledging it. Amber `buf` means the watch is
+collecting while the desktop is absent, blue `tx` / `ack` means an indication
+or host acknowledgement is pending, and green `ok` means no record awaits
+host acknowledgement. Power loss, a reboot, or more than 128 completed
+windows discards pending RAM records.
 
 ## Safety and runtime boundary
 
@@ -44,11 +51,23 @@ firmware installed:
 ./scripts/hr-study/record.sh --label baseline-004 --algorithm baseline --duration 720
 ```
 
-Wear it normally, walk far enough away to lose the PC, return, then sit/type
-until the 12-minute session ends. The logger reconnects every 15 seconds using
-the existing BlueZ paired-device object. Initial connection subscribes then
-sends `START`; reconnects only resubscribe, allowing the watch to drain its
-own cache. Normal completion sends `STOP` before disconnecting.
+`--duration` is the collection target, not an appointment the wearer must
+attend. If the watch is connected at that point, the logger drains queued ACKs,
+sends `STOP`, and exits. If it is away, the default `--return-grace 900` keeps
+the recorder retrying for another 15 minutes. On return it subscribes, sends
+`FLUSH`, drains the retained FIFO, sends `STOP`, and exits. The watch must keep
+collecting until it receives that stop command, so a delayed return can add
+some post-target records; the JSONL records both the target and actual elapsed
+duration. Use `--return-grace 0` only for diagnostics where abandoning an
+unreconciled session is acceptable; normal profiles should retain the default.
+
+For everyday profiles, use a 20- or 30-minute target, wear the watch normally,
+walk around, then return and sit/type without watching the clock. At a
+30-second background interval the 128-record RAM FIFO covers roughly 64
+minutes, including a 12-minute target plus the default return grace. The
+logger reconnects every 15 seconds using the existing BlueZ paired-device
+object. Initial connection subscribes then sends `START`; a reconnect
+subscribes, then explicitly sends `FLUSH`.
 
 Each output is new, mode-0600 JSONL under ignored `scripts/hr-study/data/`.
 Analyse without host Python or a BLE connection:
@@ -60,7 +79,9 @@ Analyse without host Python or a BLE connection:
 
 The comparison uses actual measurement-window outcomes, including unchanged
 accepted BPMs. It reports acceptance rate, first accepted time, outcome mix,
-accepted-BPM stability, sequence gaps, reconnect losses, and records delivered
-after a reconnect. A record delivered after reconnect is evidence of recovery,
-but cannot prove it was created while disconnected; that distinction is not
-encoded into the compact watch record.
+accepted-BPM stability, sequence gaps, acknowledged/unacknowledged records,
+reconnect losses, and records delivered after a reconnect. A record delivered
+after reconnect is evidence of recovery, but cannot prove it was created while
+disconnected; that distinction is not encoded into the compact watch record.
+Treat a `collection_complete: false` session as transport diagnostics, not a
+baseline profile.

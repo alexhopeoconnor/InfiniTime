@@ -144,7 +144,6 @@ void SystemTask::Work() {
 
   heartRateSensor.Init();
   heartRateSensor.Disable();
-  heartRateApp.Start();
 
   buttonHandler.Init(this);
 
@@ -175,6 +174,11 @@ void SystemTask::Work() {
   nrfx_gpiote_in_event_enable(PinMap::PowerPresent, true);
 
   batteryController.MeasureVoltage();
+  // MeasureVoltage reads PowerPresent after its GPIO input and interrupt have
+  // been configured above. Start the HR task only after that state is valid,
+  // so a boot on the cradle cannot arm Live sampling from a disconnected GPIO
+  // input buffer.
+  heartRateApp.Start();
 
   measureBatteryTimer = xTimerCreate("measureBattery", batteryMeasurementPeriod, pdTRUE, this, MeasureBatteryTimerCallback);
   xTimerStart(measureBatteryTimer, portMAX_DELAY);
@@ -351,6 +355,7 @@ void SystemTask::Work() {
           break;
         case Messages::OnChargingEvent:
           batteryController.ReadPowerState();
+          heartRateApp.PushMessage(Pinetime::Applications::HeartRateTask::Messages::PowerStateChanged);
           GoToRunning();
           break;
         case Messages::MeasureBatteryTimerExpired:

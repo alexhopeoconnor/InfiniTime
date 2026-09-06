@@ -59,8 +59,11 @@ void ElixirHrStudyService::Init() {
   ASSERT(result == 0);
 }
 
-int ElixirHrStudyService::OnAccess(uint16_t /*connectionHandle*/, uint16_t attributeHandle, ble_gatt_access_ctxt* context) {
+int ElixirHrStudyService::OnAccess(uint16_t connectionHandle, uint16_t attributeHandle, ble_gatt_access_ctxt* context) {
   if (attributeHandle != controlHandle || context->op != BLE_GATT_ACCESS_OP_WRITE_CHR) {
+    return BLE_ATT_ERR_UNLIKELY;
+  }
+  if (connectionHandle != nimble.connHandle()) {
     return BLE_ATT_ERR_UNLIKELY;
   }
   if (!indicationEnabled) {
@@ -70,7 +73,8 @@ int ElixirHrStudyService::OnAccess(uint16_t /*connectionHandle*/, uint16_t attri
     // introducing a private ATT error code into the temporary protocol.
     return BLE_ATT_ERR_UNLIKELY;
   }
-  if (OS_MBUF_PKTLEN(context->om) != 1) {
+  const auto length = OS_MBUF_PKTLEN(context->om);
+  if (length < 1) {
     return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
   }
 
@@ -80,11 +84,60 @@ int ElixirHrStudyService::OnAccess(uint16_t /*connectionHandle*/, uint16_t attri
   }
   switch (static_cast<Commands>(command)) {
     case Commands::Start:
+      if (length != 1) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
       heartRateController.RequestStudyStart();
       return 0;
     case Commands::Stop:
+      if (length != 1) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
       heartRateController.RequestStudyStop();
       return 0;
+    case Commands::Flush:
+      if (length != 1) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+      // A client sends FLUSH only after its notification callback is live.
+      // Do not flush merely because BlueZ has updated the CCCD.
+      heartRateController.RequestStudyFlush();
+      return 0;
+    case Commands::Acknowledge: {
+      if (length != 5) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+
+      uint8_t payload[5] {};
+      if (os_mbuf_copydata(context->om, 0, sizeof(payload), payload) != 0) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+      const uint32_t sequence = static_cast<uint32_t>(payload[1]) |
+                                (static_cast<uint32_t>(payload[2]) << 8U) |
+                                (static_cast<uint32_t>(payload[3]) << 16U) |
+                                (static_cast<uint32_t>(payload[4]) << 24U);
+      // The central can persist and acknowledge an indication before the
+      // NimBLE host task delivers its BLE_HS_EDONE callback.  Accept the
+      // matching ACK in either state, but leave it pending until that
+      // callback arrives; HeartRateTask is then the only code that removes
+      // the front record from the buffer.
+      if ((!indicationInFlight && !awaitingHostAcknowledgement) || sequence != pendingSequence) {
+        return BLE_ATT_ERR_UNLIKELY;
+      }
+
+      // A write response may be retried by the central while the first ACK
+      // message is waiting for HeartRateTask.  It is already durable from the
+      // host's point of view, so accept the duplicate without enqueueing a
+      // second removal request.
+      if (acknowledgementPending) {
+        return acknowledgedSequence.load() == sequence ? 0 : BLE_ATT_ERR_UNLIKELY;
+      }
+
+      acknowledgedSequence = sequence;
+      acknowledgementPending = true;
+      heartRateController.RequestStudyAcknowledgement();
+      return 0;
+    }
   }
   return BLE_ATT_ERR_UNLIKELY;
 }
@@ -96,16 +149,18 @@ void ElixirHrStudyService::UpdateIndicationSubscription(uint16_t attributeHandle
   indicationEnabled = enabled;
   if (!enabled) {
     indicationInFlight = false;
-    completion = IndicationCompletion::None;
-    return;
+    awaitingHostAcknowledgement = false;
+    acknowledgementPending = false;
+    indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
   }
-  heartRateController.RequestStudyFlush();
 }
 
 void ElixirHrStudyService::OnDisconnected() {
   indicationEnabled = false;
   indicationInFlight = false;
-  completion = IndicationCompletion::None;
+  awaitingHostAcknowledgement = false;
+  acknowledgementPending = false;
+  indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
 }
 
 void ElixirHrStudyService::OnIndicationComplete(const ble_gap_event& event) {
@@ -117,25 +172,41 @@ void ElixirHrStudyService::OnIndicationComplete(const ble_gap_event& event) {
   if (event.notify_tx.status == 0) {
     return;
   }
+  if (!indicationInFlight || event.notify_tx.conn_handle != indicationConnectionHandle) {
+    return;
+  }
 
   indicationInFlight = false;
-  completion = event.notify_tx.status == BLE_HS_EDONE ? IndicationCompletion::Confirmed : IndicationCompletion::Failed;
-  if (event.notify_tx.status != BLE_HS_EDONE) {
-    indicationEnabled = false;
+  indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
+  if (event.notify_tx.status == BLE_HS_EDONE) {
+    // The ATT confirmation is only proof that the peer Bluetooth stack
+    // received the indication. The record remains in RAM until the Docker
+    // logger has flushed JSONL and writes an explicit sequence acknowledgement.
+    awaitingHostAcknowledgement = true;
+    // The host may have ACKed immediately after it received the indication.
+    // Defer buffer removal until both that ACK and the local confirmation are
+    // present, then wake HeartRateTask to consume the already-recorded ACK.
+    if (acknowledgementPending) {
+      heartRateController.RequestStudyAcknowledgement();
+    }
+  } else {
+    NRF_LOG_WARNING("HR study indication was not confirmed: %d", event.notify_tx.status);
+    acknowledgementPending = false;
   }
-  heartRateController.RequestStudyIndicationComplete();
 }
 
 void ElixirHrStudyService::SetSessionActive(bool active) {
   sessionActive = active;
   if (!active) {
     indicationInFlight = false;
-    completion = IndicationCompletion::None;
+    awaitingHostAcknowledgement = false;
+    acknowledgementPending = false;
+    indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
   }
 }
 
 bool ElixirHrStudyService::TryIndicate(const HrStudyRecord& record) {
-  if (!sessionActive || !indicationEnabled || indicationInFlight) {
+  if (!sessionActive || !indicationEnabled || indicationInFlight || awaitingHostAcknowledgement || acknowledgementPending) {
     return false;
   }
   const uint16_t connectionHandle = nimble.connHandle();
@@ -148,19 +219,41 @@ bool ElixirHrStudyService::TryIndicate(const HrStudyRecord& record) {
   if (om == nullptr) {
     return false;
   }
+  pendingSequence = record.sequence;
+  indicationConnectionHandle = connectionHandle;
+  indicationInFlight = true;
   const int result = ble_gattc_indicate_custom(connectionHandle, recordHandle, om);
   if (result != 0) {
     NRF_LOG_WARNING("HR study indication queue failed: %d", result);
+    indicationInFlight = false;
+    indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
     return false;
   }
-  indicationInFlight = true;
   return true;
 }
 
-ElixirHrStudyService::IndicationCompletion ElixirHrStudyService::ConsumeIndicationCompletion() {
-  const auto value = completion.load();
-  completion = IndicationCompletion::None;
-  return value;
+bool ElixirHrStudyService::ConsumeAcknowledgement(uint32_t& sequence) {
+  // OnAccess can receive a valid ACK before OnIndicationComplete runs.  Keep
+  // it queued until that confirmation makes the indication's final state
+  // unambiguous.
+  if (indicationInFlight || !awaitingHostAcknowledgement) {
+    return false;
+  }
+  if (!acknowledgementPending.exchange(false)) {
+    return false;
+  }
+  sequence = acknowledgedSequence.load();
+  return true;
+}
+
+void ElixirHrStudyService::CompleteAcknowledgement(bool accepted) {
+  if (!accepted) {
+    NRF_LOG_ERROR("HR study acknowledgement did not match the buffered record");
+  }
+  awaitingHostAcknowledgement = false;
+  if (accepted) {
+    pendingSequence = 0;
+  }
 }
 
 HrStudyTransportState ElixirHrStudyService::TransportState() const {
@@ -169,6 +262,9 @@ HrStudyTransportState ElixirHrStudyService::TransportState() const {
   }
   if (indicationInFlight) {
     return HrStudyTransportState::Sending;
+  }
+  if (awaitingHostAcknowledgement || acknowledgementPending) {
+    return HrStudyTransportState::AwaitingAcknowledgement;
   }
   return indicationEnabled ? HrStudyTransportState::Connected : HrStudyTransportState::Buffering;
 }

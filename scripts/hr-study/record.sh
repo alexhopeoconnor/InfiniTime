@@ -7,6 +7,7 @@ readonly repository_root="$(cd -- "$script_dir/../.." && pwd)"
 readonly image="elixir-hr-study:local"
 readonly default_address="CF:95:FC:A9:F2:B7"
 readonly default_duration=720
+readonly default_return_grace=900
 readonly itd_run_dir="${ELIXIR_ITD_RUN_DIR:-/tmp/elixir-itd}"
 readonly itd_config_dir="${ELIXIR_ITD_CONFIG_DIR:-/tmp/elixir-itd-config}"
 readonly itd_bin="$itd_run_dir/itd"
@@ -16,20 +17,26 @@ readonly itd_config_source="$repository_root/doc/itd-dfu-only.toml"
 
 address="$default_address"
 duration="$default_duration"
+return_grace="$default_return_grace"
 label=""
 algorithm="baseline"
 synchronize_time=true
 itd_pid=""
+itd_socket_settled=false
 
 usage() {
   cat <<'EOF'
 Usage: record.sh --label NAME [--algorithm baseline|ppgv2] [--address BLE_ADDRESS]
-                 [--duration SECONDS] [--no-sync-time]
+                 [--duration SECONDS] [--return-grace SECONDS] [--no-sync-time]
 
 Records one bounded temporary HR-study session from an already-paired PineTime.
 It neither scans nor pairs and it never opens a network listener. By default it
 performs one explicit clock sync through the restricted temporary itd daemon,
 stops that daemon, then starts the Docker-only BLE logger.
+
+If the watch is out of range when the target duration elapses, the logger keeps
+retrying for a bounded return-grace window (default: 900 seconds). It flushes
+the watch buffer and stops the study as soon as the watch returns.
 EOF
 }
 
@@ -41,6 +48,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --duration)
       duration="$2"
+      shift 2
+      ;;
+    --return-grace)
+      return_grace="$2"
       shift 2
       ;;
     --label)
@@ -67,6 +78,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ "$duration" =~ ^[1-9][0-9]*$ ]] || { echo "duration must be a positive integer" >&2; exit 2; }
+[[ "$return_grace" =~ ^[0-9]+$ ]] || { echo "return-grace must be zero or a positive integer" >&2; exit 2; }
 [[ "$label" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "label must use letters, numbers, dots, underscores, or hyphens" >&2; exit 2; }
 [[ "$address" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || { echo "address must be a Bluetooth MAC address" >&2; exit 2; }
 [[ "$algorithm" == "baseline" || "$algorithm" == "ppgv2" ]] || { echo "algorithm must be baseline or ppgv2" >&2; exit 2; }
@@ -82,7 +94,7 @@ stop_time_sync_daemon() {
 
 synchronize_watch_time() {
   [[ -x "$itd_bin" && -x "$itctl_bin" ]] || {
-    echo "Missing vetted itd/itctl binaries in $itd_run_dir. Rebuild them from public/embedded/itd as documented in doc/elixir-time.md." >&2
+    echo "Missing vetted itd/itctl binaries in $itd_run_dir. Rebuild them from the sibling ../itd checkout as documented in doc/elixir-time.md." >&2
     exit 1
   }
   [[ -f "$itd_config_source" ]] || {
@@ -99,6 +111,13 @@ synchronize_watch_time() {
   itd_pid=$!
 
   for _ in {1..60}; do
+    if [[ -S "$itd_socket" && "$itd_socket_settled" == false ]]; then
+      # ITD creates its local socket before the peripheral's GATT discovery
+      # finishes. Probing Device Information immediately can make this
+      # one-shot DFU-only daemon exit with a missing-characteristic error.
+      sleep 3
+      itd_socket_settled=true
+    fi
     if [[ -S "$itd_socket" ]] && XDG_CONFIG_HOME="$itd_config_dir" "$itctl_bin" --socket-path "$itd_socket" firmware version; then
       XDG_CONFIG_HOME="$itd_config_dir" "$itctl_bin" --socket-path "$itd_socket" set time now
       stop_time_sync_daemon
@@ -131,7 +150,7 @@ data_dir="$script_dir/data"
 mkdir -p "$data_dir"
 output="$data_dir/${label}-$(date -u +%Y%m%dT%H%M%SZ).jsonl"
 
-docker run --rm --init \
+if ! docker run --rm --init \
   --network=none \
   --read-only \
   --cap-drop=ALL \
@@ -144,8 +163,12 @@ docker run --rm --init \
   "$image" record \
   --address "$address" \
   --duration "$duration" \
+  --return-grace "$return_grace" \
   --out "/out/$(basename -- "$output")" \
   --label "$label" \
-  --algorithm "$algorithm"
+  --algorithm "$algorithm"; then
+  echo "Study did not reconnect and stop within its return-grace window. Data: $output" >&2
+  exit 1
+fi
 
 echo "Study data: $output"

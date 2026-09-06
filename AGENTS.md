@@ -22,9 +22,11 @@ The user has explicitly authorised one narrow exception: temporary
 `ELIXIR_HR_STUDY` comparison firmware may expose the private, unadvertised
 Elixir HR Study GATT service. It is compiled out by default, captures one
 20-byte completed-window summary at a time, and is only for a bounded Docker
-recorder session with the phone Bluetooth off. Do not turn it into a companion
-API, add it to advertising, replay cached data through the standard Heart Rate
-Service, or ship it in normal ElixirTime builds.
+recorder session with the phone Bluetooth off. A study record is retained until
+the recorder has durably written JSONL and explicitly acknowledges its
+sequence; BLE indication confirmation alone is never sufficient. Do not turn
+it into a companion API, add it to advertising, replay cached data through the
+standard Heart Rate Service, or ship it in normal ElixirTime builds.
 
 `doc/elixir-time.md` is the product and maintenance guide. Keep its statements
 in sync when an ElixirTime-specific design decision changes.
@@ -77,8 +79,7 @@ enabled = false
 enabled = false
 ```
 
-The vetted local ITD checkout is
-`/home/alex/Documents/Projects/public/embedded/itd`, on branch
+The vetted local ITD checkout is the sibling `../itd` repository, on branch
 `elixir-dfu-only` (commit `922aa5a`, based on upstream `b79806e`). Its
 `ELIXIR_DFU_ONLY=1` mode exposes only the temporary local control socket. It
 does not initialise notification relay, music, calls, weather, metrics,
@@ -120,8 +121,10 @@ Before an OTA, all of the following are mandatory:
 2. Record and verify the SHA-256 of the exact application DFU archive.
 3. Keep a known-good upstream application DFU archive available for rollback.
 4. On the watch, enable `Settings -> Over-the-air -> Firmware & files`.
-5. Confirm sufficient battery, an exclusive BLE connection, and a recovery
-   route.
+5. Physically verify that the watch is seated securely on its charging dock,
+   then confirm sufficient battery, an exclusive BLE connection, and a
+   recovery route. Do not begin or continue a desktop OTA while it is off the
+   dock: movement can break the long BLE transfer.
 6. Start the temporary daemon with `ELIXIR_DFU_ONLY=1`, using a temporary
    `XDG_CONFIG_HOME` and socket, then prove the connection with `itctl firmware
    version`. The desktop must be paired with the watch; a stale bond that
