@@ -255,6 +255,10 @@ void WatchFaceTerminal::Refresh() {
         lv_label_set_text_fmt(connectState, "#ffffff %s# tx", Symbols::bluetooth);
         lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::blue);
         return;
+      case Controllers::HrStudyTransportState::AwaitingAcknowledgement:
+        lv_label_set_text_fmt(connectState, "#ffffff %s# ack", Symbols::bluetooth);
+        lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::blue);
+        return;
       case Controllers::HrStudyTransportState::Connected:
         lv_label_set_text_fmt(connectState, "#ffffff %s# ok", Symbols::bluetooth);
         lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::green);

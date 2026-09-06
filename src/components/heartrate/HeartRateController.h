@@ -86,7 +86,7 @@ namespace Pinetime {
       void RequestStudyStart();
       void RequestStudyStop();
       void RequestStudyFlush();
-      void RequestStudyIndicationComplete();
+      void RequestStudyAcknowledgement();
 #endif
 
     private:

@@ -99,18 +99,28 @@ accepted BPM or failure reason, PPG mean/range, compact accelerometer/step and
 ambient context, power/mode flags, and a watch tick. It deliberately sends no
 raw optical samples.
 
-The HR task stores at most 128 such records in RAM. It retains the oldest one
-until the paired desktop confirms its normal BLE indication; walking away from
-the PC therefore buffers completed windows and returning resubscribes and
-flushes the cache. The standard Bluetooth Heart Rate Service remains live-only
-and never replays cached values as if they were current. A reboot, power loss,
-or ring-buffer overflow loses pending study records by design.
+The HR task stores at most 128 such records in RAM. A normal BLE indication
+confirmation only proves the desktop Bluetooth stack received a packet, so it
+does not remove the oldest record. The Docker logger flushes its JSONL entry,
+then explicitly acknowledges that sequence; only then does the watch discard
+it. Walking away therefore buffers completed windows; on return the logger
+subscribes, then explicitly requests a flush after its durable-ACK handler is
+ready. The standard Bluetooth Heart Rate Service remains live-only and never
+replays cached values as if they were current. A reboot, power loss, or
+ring-buffer overflow loses pending study records by design.
+
+The recorder's duration is a collection target. If the watch is out of range
+at that point, its default 15-minute return grace keeps the Docker recorder
+alive to reconnect, flush the FIFO, and send `STOP` when the wearer returns.
+The watch necessarily continues capturing until that stop arrives, so delayed
+returns can add post-target records; use a 20- or 30-minute target for normal
+wear rather than treating 12 minutes as an appointment.
 
 During an active study the Terminal Bluetooth row makes this visible without
 adding a new screen: amber `buf` means the watch is collecting while the
-desktop is absent, blue `tx` means one indication is awaiting confirmation,
-and green `ok` means the most recent record was confirmed. The code and its
-Docker-only recorder are documented in
+desktop is absent, blue `tx` / `ack` means an indication or host
+acknowledgement is pending, and green `ok` means no record awaits host
+acknowledgement. The code and its Docker-only recorder are documented in
 [`scripts/hr-study/README.md`](../scripts/hr-study/README.md). The launcher is
 the sole approved automated time sync: it starts the restricted DFU-only ITD
 daemon, runs one explicit `itctl set time now`, stops that daemon, and only
@@ -147,7 +157,10 @@ are true:
 
 1. The application and recovery targets build successfully.
 2. The generated DFU archive has been inspected and its checksum recorded.
-3. The phone/desktop DFU client can see the watch and has enough battery.
+3. The watch is seated securely on its charging dock; the phone/desktop DFU
+   client can see it and it has enough battery. Do not begin or continue the
+   long BLE transfer while it is off the dock, where movement can break the
+   connection.
 4. A recovery route is available if the app does not boot.
 
 The included charging cable supplies power only; it is not a USB data, serial,
@@ -199,7 +212,7 @@ enabled = false
 enabled = false
 ```
 
-The local checkout at `/home/alex/Documents/Projects/public/embedded/itd`
+The sibling checkout at `../itd` (relative to the InfiniTime repository root)
 contains a small reviewed branch, `elixir-dfu-only` at `922aa5a` (on top of
 upstream `b79806e`). Its `ELIXIR_DFU_ONLY=1` mode deliberately starts only the
 Bluetooth connection and local control socket. It does **not** relay desktop
@@ -214,7 +227,7 @@ service. If `/tmp/elixir-itd` has been cleared, rebuild from the reviewed
 checkout (the Go module and build caches may also remain in `/tmp`):
 
 ```sh
-itd_root=/home/alex/Documents/Projects/public/embedded/itd
+itd_root="$(cd ../itd && pwd)"
 cd "$itd_root"
 git switch elixir-dfu-only
 mkdir -p /tmp/elixir-itd
@@ -246,9 +259,10 @@ The current known-good workflow is:
 
 ```sh
 # On the watch first: Settings -> Over-the-air -> Firmware & files -> Enabled.
+# Keep the watch seated securely on its charging dock for the entire transfer.
 # Phone Bluetooth off; the PineTime is paired with this PC.
 
-itd_root=/home/alex/Documents/Projects/public/embedded/itd
+itd_root="$(cd ../itd && pwd)"
 itd_run=/tmp/elixir-itd
 itd_cfg=/tmp/elixir-itd-config
 # Use the same build directory passed as BUILD_DIR to the container build.

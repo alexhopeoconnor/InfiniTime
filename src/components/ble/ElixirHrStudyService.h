@@ -17,8 +17,7 @@ namespace Pinetime::Controllers {
 
   class ElixirHrStudyService {
   public:
-    enum class Commands : uint8_t { Start = 0x01, Stop = 0x02 };
-    enum class IndicationCompletion : uint8_t { None, Confirmed, Failed };
+    enum class Commands : uint8_t { Start = 0x01, Stop = 0x02, Flush = 0x03, Acknowledge = 0x04 };
 
     ElixirHrStudyService(NimbleController& nimble, HeartRateController& heartRateController);
     void Init();
@@ -30,7 +29,8 @@ namespace Pinetime::Controllers {
 
     void SetSessionActive(bool active);
     bool TryIndicate(const HrStudyRecord& record);
-    IndicationCompletion ConsumeIndicationCompletion();
+    bool ConsumeAcknowledgement(uint32_t& sequence);
+    void CompleteAcknowledgement(bool accepted);
     HrStudyTransportState TransportState() const;
 
   private:
@@ -45,6 +45,10 @@ namespace Pinetime::Controllers {
     std::atomic_bool sessionActive {false};
     std::atomic_bool indicationEnabled {false};
     std::atomic_bool indicationInFlight {false};
-    std::atomic<IndicationCompletion> completion {IndicationCompletion::None};
+    std::atomic_bool awaitingHostAcknowledgement {false};
+    std::atomic_bool acknowledgementPending {false};
+    std::atomic_uint32_t pendingSequence {0};
+    std::atomic_uint32_t acknowledgedSequence {0};
+    std::atomic_uint16_t indicationConnectionHandle {BLE_HS_CONN_HANDLE_NONE};
   };
 }

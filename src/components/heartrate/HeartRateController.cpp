@@ -89,9 +89,9 @@ void HeartRateController::RequestStudyFlush() {
   }
 }
 
-void HeartRateController::RequestStudyIndicationComplete() {
+void HeartRateController::RequestStudyAcknowledgement() {
   if (task != nullptr) {
-    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyIndicationComplete);
+    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyAcknowledgement);
   }
 }
 #endif

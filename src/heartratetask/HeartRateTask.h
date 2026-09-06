@@ -37,7 +37,7 @@ namespace Pinetime {
         StudyStart,
         StudyStop,
         StudyFlush,
-        StudyIndicationComplete,
+        StudyAcknowledgement,
 #endif
       };
 

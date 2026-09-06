@@ -33,6 +33,8 @@ def main() -> int:
       ("first ok s", "first_accepted_seconds"),
       ("bpm sd", "accepted_bpm_stdev"),
       ("gaps", "sequence_gaps"),
+      ("acks", "acknowledged_records"),
+      ("unacked", "unacknowledged_records"),
       ("recovered", "recovered_after_disconnect"),
       ("losses", "connection_losses"),
   )

@@ -248,12 +248,19 @@ void HeartRateTask::Work() {
         case Messages::StudyFlush:
           DrainStudyBuffer();
           break;
-        case Messages::StudyIndicationComplete:
+        case Messages::StudyAcknowledgement:
           if (auto* studyService = controller.StudyService(); studyService != nullptr) {
-            const auto completion = studyService->ConsumeIndicationCompletion();
-            if (completion == Controllers::ElixirHrStudyService::IndicationCompletion::Confirmed) {
-              studyBuffer.PopFront();
-              DrainStudyBuffer();
+            uint32_t sequence = 0;
+            if (studyService->ConsumeAcknowledgement(sequence)) {
+              const auto* record = studyBuffer.Front();
+              const bool accepted = record != nullptr && record->sequence == sequence;
+              if (accepted) {
+                studyBuffer.PopFront();
+              }
+              studyService->CompleteAcknowledgement(accepted);
+              if (accepted) {
+                DrainStudyBuffer();
+              }
             }
           }
           break;

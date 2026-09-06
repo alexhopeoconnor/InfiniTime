@@ -60,6 +60,12 @@ def summary(path: Path) -> dict[str, Any]:
     first_accepted = datetime.fromisoformat(str(accepted[0]["arrival_utc"]))
     first_accepted_seconds = round((first_accepted - session_start).total_seconds(), 3)
   accepted_bpms = [int(event["bpm"]) for event in accepted]
+  acknowledged_sequences = {
+      int(event["sequence"])
+      for event in events
+      if event.get("event") == "record_acknowledged" and "sequence" in event
+  }
+  record_sequences = {int(record["sequence"]) for record in records}
   result: dict[str, Any] = {
       "file": str(path),
       "label": start.get("label"),
@@ -76,6 +82,17 @@ def summary(path: Path) -> dict[str, Any]:
       "connection_attempts": end.get("connection_attempts", 0),
       "duplicate_records": end.get("duplicate_records", 0),
   }
+  if int(start.get("schema_version", 0)) >= 2:
+    result["acknowledged_records"] = len(acknowledged_sequences.intersection(record_sequences))
+    result["unacknowledged_records"] = len(record_sequences.difference(acknowledged_sequences))
+    result["ack_errors"] = sum(event.get("event") == "record_ack_error" for event in events)
+  if "return_grace_seconds" in start or "collection_complete" in end:
+    result["target_duration_seconds"] = end.get("target_duration_seconds", start.get("duration_seconds"))
+    result["return_grace_seconds"] = end.get("return_grace_seconds", start.get("return_grace_seconds"))
+    result["collection_complete"] = end.get("collection_complete")
+    result["recovery_grace_expired"] = end.get("recovery_grace_expired")
+    drain = next((event for event in reversed(events) if event.get("event") == "soft_end_drain"), None)
+    result["soft_end_drain_complete"] = None if drain is None else drain.get("drained")
   if accepted_bpms:
     result["accepted_bpm_mean"] = round(statistics.fmean(accepted_bpms), 2)
     result["accepted_bpm_stdev"] = round(statistics.pstdev(accepted_bpms), 2)
