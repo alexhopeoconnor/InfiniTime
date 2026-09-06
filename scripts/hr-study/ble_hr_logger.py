@@ -15,6 +15,7 @@ import asyncio
 import contextlib
 from datetime import datetime, timezone
 import json
+import os
 from pathlib import Path
 import struct
 import sys
@@ -66,6 +67,10 @@ class JsonlWriter:
       event["arrival_utc"] = timestamp
     self._file.write(json.dumps(event, separators=(",", ":"), sort_keys=True) + "\n")
     self._file.flush()
+    # The watch keeps its FIFO entry until the recorder ACKs its sequence.
+    # A Python flush alone only reaches the kernel page cache; force it to
+    # storage before an acknowledgement can be sent for this event.
+    os.fsync(self._file.fileno())
 
   def close(self) -> None:
     self._file.close()

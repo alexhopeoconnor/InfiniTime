@@ -14,7 +14,8 @@ for the standard live Heart Rate Service.
 
 The watch keeps 128 records in RAM. A BLE indication confirmation only proves
 that BlueZ received a packet, so it does **not** discard the record. The
-Docker logger first flushes the JSONL row, then writes `ACK(sequence)`; only
+Docker logger flushes and `fsync`s the JSONL row, then writes
+`ACK(sequence)`; only
 that matching acknowledgement removes the front record. On reconnect the
 logger subscribes, then explicitly requests `FLUSH` once its callback and ACK
 worker are ready. A retry may therefore repeat a sequence, which the logger

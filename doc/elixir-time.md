@@ -101,9 +101,9 @@ raw optical samples.
 
 The HR task stores at most 128 such records in RAM. A normal BLE indication
 confirmation only proves the desktop Bluetooth stack received a packet, so it
-does not remove the oldest record. The Docker logger flushes its JSONL entry,
-then explicitly acknowledges that sequence; only then does the watch discard
-it. Walking away therefore buffers completed windows; on return the logger
+does not remove the oldest record. The Docker logger flushes and `fsync`s its
+JSONL entry, then explicitly acknowledges that sequence; only then does the
+watch discard it. Walking away therefore buffers completed windows; on return the logger
 subscribes, then explicitly requests a flush after its durable-ACK handler is
 ready. The standard Bluetooth Heart Rate Service remains live-only and never
 replays cached values as if they were current. A reboot, power loss, or
