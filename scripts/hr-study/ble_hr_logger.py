@@ -335,6 +335,12 @@ async def record(
           # updated the CCCD. This request happens only after the callback and
           # durable-ACK worker are ready for recovered indications.
           await client.write_gatt_char(STUDY_CONTROL, STUDY_FLUSH, response=True)
+          # A FLUSH can be the first operation after a slow reconnect.  The
+          # quiet period must begin at this acknowledged request, not at the
+          # start of the connection attempt, otherwise the host can decide
+          # that an already-buffered FIFO is empty before its first indication
+          # reaches the callback.
+          last_record_at["value"] = monotonic()
           writer.write({"event": "study_flush_requested", "attempt": attempt})
 
         if target_elapsed:

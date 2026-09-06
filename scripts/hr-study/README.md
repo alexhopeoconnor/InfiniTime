@@ -18,7 +18,9 @@ Docker logger flushes and `fsync`s the JSONL row, then writes
 `ACK(sequence)`; only
 that matching acknowledgement removes the front record. On reconnect the
 logger subscribes, then explicitly requests `FLUSH` once its callback and ACK
-worker are ready. A retry may therefore repeat a sequence, which the logger
+worker are ready. Its drain quiet period begins only after that `FLUSH` write
+is accepted, so a delayed first retained indication cannot be mistaken for an
+empty FIFO. A retry may therefore repeat a sequence, which the logger
 deduplicates while still acknowledging it. Amber `buf` means the watch is
 collecting while the desktop is absent, blue `tx` / `ack` means an indication
 or host acknowledgement is pending, and green `ok` means no record awaits
