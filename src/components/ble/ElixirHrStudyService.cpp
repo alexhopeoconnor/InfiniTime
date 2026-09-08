@@ -83,12 +83,26 @@ int ElixirHrStudyService::OnAccess(uint16_t connectionHandle, uint16_t attribute
     return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
   }
   switch (static_cast<Commands>(command)) {
-    case Commands::Start:
-      if (length != 1) {
+    case Commands::Start: {
+      // START carries a bounded capture lease in little-endian seconds.  The
+      // temporary study FIFO is RAM-only, so accepting an arbitrary multi-hour
+      // lease would promise retention it cannot provide while disconnected.
+      if (length != 3) {
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
       }
-      heartRateController.RequestStudyStart();
+
+      uint8_t payload[3] {};
+      if (os_mbuf_copydata(context->om, 0, sizeof(payload), payload) != 0) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+      const uint16_t durationSeconds = static_cast<uint16_t>(payload[1]) |
+                                       (static_cast<uint16_t>(payload[2]) << 8U);
+      if (durationSeconds == 0 || durationSeconds > MaxCaptureDurationSeconds) {
+        return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
+      }
+      heartRateController.RequestStudyStart(durationSeconds);
       return 0;
+    }
     case Commands::Stop:
       if (length != 1) {
         return BLE_ATT_ERR_INVALID_ATTR_VALUE_LEN;
@@ -197,11 +211,18 @@ void ElixirHrStudyService::OnIndicationComplete(const ble_gap_event& event) {
 
 void ElixirHrStudyService::SetSessionActive(bool active) {
   sessionActive = active;
+  captureComplete = false;
   if (!active) {
     indicationInFlight = false;
     awaitingHostAcknowledgement = false;
     acknowledgementPending = false;
     indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
+  }
+}
+
+void ElixirHrStudyService::SetCaptureComplete(bool complete) {
+  if (sessionActive) {
+    captureComplete = complete;
   }
 }
 
@@ -265,6 +286,11 @@ HrStudyTransportState ElixirHrStudyService::TransportState() const {
   }
   if (awaitingHostAcknowledgement || acknowledgementPending) {
     return HrStudyTransportState::AwaitingAcknowledgement;
+  }
+  if (captureComplete) {
+    // Capture has ended on the watch, but the service intentionally remains
+    // available to flush and ACK the retained FIFO after a delayed return.
+    return HrStudyTransportState::CaptureComplete;
   }
   return indicationEnabled ? HrStudyTransportState::Connected : HrStudyTransportState::Buffering;
 }

@@ -6,10 +6,11 @@ tag, with `upstream` kept as the official repository remote.
 
 The device continues to use the established InfiniTime BLE device identity for
 phone compatibility. Its standard Device Information **software revision** is
-`ElixirTime`, while its firmware revision is `1.16.9`; the Terminal watch face
-identifies the customised firmware as `elixir@time`. These independent,
-visible identifiers make a successful custom flash distinguishable from an
-upstream `1.16.1` image.
+`ElixirTime`, while this temporary PPGv2 comparison branch identifies itself as
+firmware revision `1.16.10`; the Terminal watch face identifies the customised
+firmware as `elixir@time`. The normal `firmware/elixir-time` baseline remains
+`1.16.9`. These identifiers make the required post-reboot verification
+unambiguous without changing the visible face for an experiment.
 
 ## Product choices
 
@@ -46,7 +47,8 @@ recent verified reading is retained and classified as:
 
 - **fresh** for 30 seconds;
 - **stale** for the following 90 seconds, visibly marked with `~` and an age
-  that advances once per second while the face is awake;
+  shown as `+34s` (or compact whole minutes such as `+1m`) while the face is
+  awake;
 - **unavailable** after two minutes, or before the first valid reading.
 
 This is a display/data-quality improvement, not a claim of clinical accuracy.
@@ -99,6 +101,14 @@ accepted BPM or failure reason, PPG mean/range, compact accelerometer/step and
 ambient context, power/mode flags, and a watch tick. It deliberately sends no
 raw optical samples.
 
+On `research/ppgv2`, the estimator samples the optical sensor and raw
+three-axis accelerometer together at a fixed cadence, applies adaptive motion
+filtering and frequency-domain peak selection, and records profile `1` in each
+study row. The Docker comparison tool exposes a `--algorithm ppgv2` profile
+mismatch as a failed test identity; it is never combined with a baseline
+profile. This branch is experimental: do not merge it back to
+`firmware/elixir-time` merely because it builds or flashes.
+
 The HR task stores at most 128 such records in RAM. A normal BLE indication
 confirmation only proves the desktop Bluetooth stack received a packet, so it
 does not remove the oldest record. The Docker logger flushes and `fsync`s its
@@ -109,16 +119,19 @@ ready. The standard Bluetooth Heart Rate Service remains live-only and never
 replays cached values as if they were current. A reboot, power loss, or
 ring-buffer overflow loses pending study records by design.
 
-The recorder's duration is a collection target. If the watch is out of range
-at that point, its default 15-minute return grace keeps the Docker recorder
-alive to reconnect, flush the FIFO, and send `STOP` when the wearer returns.
-The watch necessarily continues capturing until that stop arrives, so delayed
-returns can add post-target records; use a 20- or 30-minute target for normal
-wear rather than treating 12 minutes as an appointment.
+The recorder's duration is an on-watch capture lease. `START` carries that
+lease, capped at 45 minutes because the FIFO is RAM-only. At expiry the watch
+stops adding study records but preserves its FIFO for a later `FLUSH` and
+durable ACK; it does not silently turn an out-of-range test into an unbounded
+capture. If the watch is away, the Docker recorder's default 15-minute return
+grace keeps it alive to reconnect, flush the retained FIFO, and send `STOP`
+when the wearer returns. A longer return grace is safe when the desktop remains
+awake, but it does not increase the capture lease or RAM capacity.
 
 During an active study the Terminal Bluetooth row makes this visible without
 adding a new screen: amber `buf` means the watch is collecting while the
-desktop is absent, blue `tx` / `ack` means an indication or host
+desktop is absent; amber `hold` means its bounded capture is complete and its
+FIFO is retained for recovery; blue `tx` / `ack` means an indication or host
 acknowledgement is pending, and green `ok` means no record awaits host
 acknowledgement. The code and its Docker-only recorder are documented in
 [`scripts/hr-study/README.md`](../scripts/hr-study/README.md). The launcher is

@@ -30,11 +30,12 @@ def main() -> int:
       ("windows", "measurement_windows"),
       ("accepted", "accepted_windows"),
       ("rate", "acceptance_rate"),
-      ("first ok s", "first_accepted_seconds"),
+      ("1st ok after 1st s", "first_accepted_after_first_record_seconds"),
       ("bpm sd", "accepted_bpm_stdev"),
       ("gaps", "sequence_gaps"),
-      ("acks", "acknowledged_records"),
-      ("unacked", "unacknowledged_records"),
+      ("profile", "algorithm_profile_matches_requested"),
+      ("ack ok", "acknowledged_records"),
+      ("ack ?", "host_ack_unconfirmed_records"),
       ("recovered", "recovered_after_disconnect"),
       ("losses", "connection_losses"),
   )
@@ -51,6 +52,20 @@ def main() -> int:
   print(format_row(["-" * width for width in widths]))
   for row in rendered:
     print(format_row(row))
+
+  invalid_profiles = [
+      row
+      for row in rows
+      if row.get("algorithm_profile_matches_requested") is not True
+  ]
+  if invalid_profiles:
+    labels = ", ".join(str(row.get("label") or row.get("file")) for row in invalid_profiles)
+    print(
+        "Refusing comparison: the recorded estimator profile does not match "
+        f"the requested algorithm for: {labels}",
+        file=sys.stderr,
+    )
+    return 1
   return 0
 
 

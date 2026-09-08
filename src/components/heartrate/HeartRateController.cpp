@@ -71,10 +71,15 @@ HrStudyTransportState HeartRateController::GetStudyTransportState() const {
   return studyService == nullptr ? HrStudyTransportState::Off : studyService->TransportState();
 }
 
-void HeartRateController::RequestStudyStart() {
+void HeartRateController::RequestStudyStart(uint16_t durationSeconds) {
   if (task != nullptr) {
+    studyRequestedDurationSeconds = durationSeconds;
     task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyStart);
   }
+}
+
+uint16_t HeartRateController::RequestedStudyDurationSeconds() const {
+  return studyRequestedDurationSeconds.load();
 }
 
 void HeartRateController::RequestStudyStop() {

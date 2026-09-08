@@ -6,8 +6,11 @@
 
 #include "drivers/Hrs3300.h"
 #include <algorithm>
+#include <array>
+#include <components/heartrate/Ppg.h>
 #include <cstdint>
 #include <nrf_gpio.h>
+#include <ranges>
 
 #include <FreeRTOS.h>
 #include <task.h>

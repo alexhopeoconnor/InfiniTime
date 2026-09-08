@@ -18,6 +18,7 @@ namespace Pinetime::Controllers {
   class ElixirHrStudyService {
   public:
     enum class Commands : uint8_t { Start = 0x01, Stop = 0x02, Flush = 0x03, Acknowledge = 0x04 };
+    static constexpr uint16_t MaxCaptureDurationSeconds = 45 * 60;
 
     ElixirHrStudyService(NimbleController& nimble, HeartRateController& heartRateController);
     void Init();
@@ -28,6 +29,7 @@ namespace Pinetime::Controllers {
     void OnIndicationComplete(const ble_gap_event& event);
 
     void SetSessionActive(bool active);
+    void SetCaptureComplete(bool complete);
     bool TryIndicate(const HrStudyRecord& record);
     bool ConsumeAcknowledgement(uint32_t& sequence);
     void CompleteAcknowledgement(bool accepted);
@@ -43,6 +45,7 @@ namespace Pinetime::Controllers {
     uint16_t recordHandle = 0;
 
     std::atomic_bool sessionActive {false};
+    std::atomic_bool captureComplete {false};
     std::atomic_bool indicationEnabled {false};
     std::atomic_bool indicationInFlight {false};
     std::atomic_bool awaitingHostAcknowledgement {false};

@@ -43,6 +43,18 @@ bool HeartRateTask::BackgroundMeasurementNeeded() const {
 TickType_t HeartRateTask::CurrentTaskDelay() {
   auto backgroundPeriod = BackgroundMeasurementInterval();
   TickType_t currentTime = xTaskGetTickCount();
+  auto ClampToStudyCaptureDeadline = [this, currentTime](TickType_t delay) {
+#ifdef ELIXIR_HR_STUDY
+    if (studyCaptureActive) {
+      const auto elapsed = currentTime - studyCaptureStartedAt;
+      if (elapsed >= studyCaptureDuration) {
+        return static_cast<TickType_t>(0);
+      }
+      return std::min(delay, studyCaptureDuration - elapsed);
+    }
+#endif
+    return delay;
+  };
   auto CalculateSleepTicks = [&]() {
     TickType_t elapsed = currentTime - measurementStartTime;
 
@@ -77,30 +89,30 @@ TickType_t HeartRateTask::CurrentTaskDelay() {
   };
   switch (state) {
     case States::Disabled:
-      return portMAX_DELAY;
+      return ClampToStudyCaptureDeadline(portMAX_DELAY);
     case States::Waiting:
       // A power-state event wakes this task when the watch is removed from
       // the cradle. Do not poll or leave the HRS3300 enabled while docked.
       if (battery.IsPowerPresent()) {
-        return portMAX_DELAY;
+        return ClampToStudyCaptureDeadline(portMAX_DELAY);
       }
       // Sleep until a new event if background measuring disabled
       if (!backgroundPeriod.has_value()) {
-        return portMAX_DELAY;
+        return ClampToStudyCaptureDeadline(portMAX_DELAY);
       }
       // Sleep until the next background measurement
       if (currentTime - lastMeasurementTime < backgroundPeriod.value()) {
-        return backgroundPeriod.value() - (currentTime - lastMeasurementTime);
+        return ClampToStudyCaptureDeadline(backgroundPeriod.value() - (currentTime - lastMeasurementTime));
       }
       // If one is due now, go straight away
-      return 0;
+      return ClampToStudyCaptureDeadline(0);
     case States::BackgroundMeasuring:
     case States::ForegroundMeasuring:
-      return CalculateSleepTicks();
+      return ClampToStudyCaptureDeadline(CalculateSleepTicks());
   }
   // Needed to keep dumb compiler happy, this is unreachable
   // Any new additions to States will cause the above switch statement not to compile, so this is safe
-  return portMAX_DELAY;
+  return ClampToStudyCaptureDeadline(portMAX_DELAY);
 }
 
 HeartRateTask::HeartRateTask(Drivers::Hrs3300& heartRateSensor,
@@ -139,6 +151,9 @@ void HeartRateTask::Work() {
   }
 
   while (true) {
+#ifdef ELIXIR_HR_STUDY
+    ExpireStudyCaptureIfNeeded(xTaskGetTickCount());
+#endif
     TickType_t delay = CurrentTaskDelay();
     Messages msg;
     States newState = state;
@@ -228,6 +243,9 @@ void HeartRateTask::Work() {
           studyBuffer.Clear();
           studySequence = 0;
           studySessionActive = true;
+          studyCaptureActive = true;
+          studyCaptureStartedAt = xTaskGetTickCount();
+          studyCaptureDuration = static_cast<TickType_t>(controller.RequestedStudyDurationSeconds()) * configTICK_RATE_HZ;
           ResetStudyMeasurementStats();
           if (auto* studyService = controller.StudyService(); studyService != nullptr) {
             studyService->SetSessionActive(true);
@@ -235,6 +253,8 @@ void HeartRateTask::Work() {
           break;
         case Messages::StudyStop:
           studySessionActive = false;
+          studyCaptureActive = false;
+          studyCaptureDuration = 0;
           studyBuffer.Clear();
           if (auto* studyService = controller.StudyService(); studyService != nullptr) {
             studyService->SetSessionActive(false);
@@ -514,7 +534,7 @@ void HeartRateTask::CaptureStudySensorSample(uint16_t hrs, uint16_t als, const D
 }
 
 void HeartRateTask::ReportStudyOutcome(Controllers::HrStudyOutcome outcome, uint8_t bpm) {
-  if (!studySessionActive || studyWindowReported) {
+  if (!studyCaptureActive || studyWindowReported) {
     return;
   }
 
@@ -548,6 +568,17 @@ void HeartRateTask::DrainStudyBuffer() {
     if (const auto* record = studyBuffer.Front(); record != nullptr) {
       studyService->TryIndicate(*record);
     }
+  }
+}
+
+void HeartRateTask::ExpireStudyCaptureIfNeeded(TickType_t now) {
+  if (!studyCaptureActive || now - studyCaptureStartedAt < studyCaptureDuration) {
+    return;
+  }
+
+  studyCaptureActive = false;
+  if (auto* studyService = controller.StudyService(); studyService != nullptr) {
+    studyService->SetCaptureComplete(true);
   }
 }
 #endif

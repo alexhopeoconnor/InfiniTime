@@ -1,4 +1,5 @@
 #include "components/heartrate/Ppg.h"
+#include <limits>
 #include <nrf_log.h>
 
 using namespace Pinetime::Controllers;
@@ -22,6 +23,7 @@ void Ppg::Reset() {
   filteredHrsArray.fill(0.f);
   accAdaptive.Reset();
   lockedHrBin = std::nullopt;
+  rollingEnergy = 0.f;
 }
 
 bool Ppg::SufficientData() const {
@@ -102,6 +104,7 @@ void Ppg::StoreHrs(float filteredHrs) {
 
 void Ppg::RunAlg() {
   complexFftArray.fill(0.f);
+  fftArray.fill(0.f);
   float mean = 0.f;
   for (size_t index = 0; index < inputLength; index++) {
     mean += adaptiveHrsArray[index];
@@ -112,6 +115,11 @@ void Ppg::RunAlg() {
   }
   // Normalise energy of each segment so algorithm is input amplitude invariant
   SegmentRMSNorm();
+  // RealFFT<N> packs 2N real samples into N complex values. Pack explicitly
+  // instead of relying on the representation or aliasing of std::complex.
+  for (size_t index = 0; index < complexFftArray.size(); index++) {
+    complexFftArray[index] = {fftArray[index * 2], fftArray[(index * 2) + 1]};
+  }
   // Transform to frequency domain so we can do spectral processing
   Utility::FFT::RealFFT(complexFftArray, realTwiddle, complexTwiddle);
   // Find peaks in the spectral magnitudes so we can identify possible heart rate peaks
@@ -158,6 +166,12 @@ void Ppg::RunAlg() {
     std::optional<float> upperEnergy = std::nullopt;
     std::optional<float> lowerEnergy = std::nullopt;
     float centralEnergy = roi[bin];
+    // A zero-energy (or otherwise invalid) spectrum has no sub-bin
+    // information. Returning the integral bin keeps tracking bounded while
+    // the rolling-energy logic drops the lock on a later line.
+    if (!(centralEnergy > 0.f) || !std::isfinite(centralEnergy)) {
+      return static_cast<float>(bin);
+    }
     if (bin < roi.size() - 1) {
       upperEnergy = roi[bin + 1];
     }
@@ -197,7 +211,8 @@ void Ppg::RunAlg() {
     return PeakSearch(peak, searchRoi) + minBin;
   };
 
-  std::span<const float> roi = fftArray.subspan(minFrequencyBin, roiLength);
+  std::span<const float> roi {fftArray};
+  roi = roi.subspan(minFrequencyBin, roiLength);
   size_t bestIndex = FindPeakIndex(roi);
   float bestPeakEnergy = CalculateLogPeakEnergy(bestIndex, roi);
   std::optional<size_t> strongBin = std::nullopt;
@@ -278,12 +293,21 @@ void Ppg::RunAlg() {
   }
   size_t halfNorm = segmentNormWindow / 2;
   for (size_t index = 0; index < inputLength; index++) {
+    float normaliser = outputs[0];
     if (index <= halfNorm) {
-      fftArray[index] /= outputs[0];
+      normaliser = outputs[0];
     } else if (index >= inputLength - halfNorm) {
-      fftArray[index] /= outputs[outputs.size() - 1];
+      normaliser = outputs[outputs.size() - 1];
     } else {
-      fftArray[index] /= outputs[index - halfNorm];
+      normaliser = outputs[index - halfNorm];
+    }
+    // No optical signal has zero segment energy. Preserve that as a zero
+    // spectrum instead of allowing 0/0 to become NaN and poison peak
+    // tracking.
+    if (normaliser > std::numeric_limits<float>::epsilon() && std::isfinite(normaliser)) {
+      fftArray[index] /= normaliser;
+    } else {
+      fftArray[index] = 0.f;
     }
   }
 }

@@ -1,7 +1,6 @@
 #pragma once
 
 #include "drivers/TwiMaster.h"
-#include <components/heartrate/Ppg.h>
 #include <cstdint>
 
 namespace Pinetime {
@@ -59,20 +58,20 @@ namespace Pinetime {
       TwiMaster& twiMaster;
       uint8_t twiAddress;
 
-      uint8_t r7f;
-      uint8_t r80;
-      uint8_t r81;
-      uint8_t r82;
-      PPGDrive ppgDrive;
-      PPGGain ppgGain;
-      PPGState ppgState;
+      uint8_t r7f = 0;
+      uint8_t r80 = 0;
+      uint8_t r81 = 0;
+      uint8_t r82 = 0;
+      PPGDrive ppgDrive = PPGDrive::NoTouchPowerSave;
+      PPGGain ppgGain = PPGGain::Gain8x;
+      PPGState ppgState = PPGState::Off;
 
-      uint8_t actionDelay;
+      uint8_t actionDelay = 0;
 
-      uint8_t hrsLowCount;
-      uint8_t hrsHighCount;
-      uint16_t alsLowCount;
-      uint8_t alsHighCount;
+      uint8_t hrsLowCount = 0;
+      uint8_t hrsHighCount = 0;
+      uint16_t alsLowCount = 0;
+      uint8_t alsHighCount = 0;
 
       void WriteRegister(uint8_t reg, uint8_t data);
       uint8_t ReadRegister(uint8_t reg);

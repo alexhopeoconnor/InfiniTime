@@ -3,7 +3,10 @@ cmake_minimum_required(VERSION 3.10)
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose Debug or Release")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
-project(pinetime VERSION 1.16.9 LANGUAGES C CXX ASM)
+# 1.16.10 is reserved for the temporary PPGv2 comparison build on
+# research/ppgv2. Keeping it numerically distinct makes the DFU archive and
+# Device Information revision unambiguous after the mandatory reboot check.
+project(pinetime VERSION 1.16.10 LANGUAGES C CXX ASM)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)

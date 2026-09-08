@@ -29,17 +29,19 @@ from bleak.backends.device import BLEDevice
 STUDY_SERVICE = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e401"
 STUDY_CONTROL = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e402"
 STUDY_RECORD = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e403"
-STUDY_START = b"\x01"
+STUDY_START = 0x01
 STUDY_STOP = b"\x02"
 STUDY_FLUSH = b"\x03"
 STUDY_ACKNOWLEDGE = b"\x04"
+STUDY_START_STRUCT = struct.Struct("<BH")
 RECONNECT_DELAY_SECONDS = 15.0
 DEFAULT_RETURN_GRACE_SECONDS = 15 * 60
+MAX_STUDY_CAPTURE_SECONDS = 45 * 60
 DRAIN_QUIESCENCE_SECONDS = 1.0
 DRAIN_TIMEOUT_SECONDS = 20.0
 RECORD_STRUCT = struct.Struct("<IIHHHBBBBBB")
 ACK_STRUCT = struct.Struct("<BI")
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 OUTCOMES = {
     1: "accepted",
@@ -109,6 +111,13 @@ def decode_record(packet: bytearray) -> dict[str, int | str | bool]:
   }
 
 
+def make_study_start(duration_seconds: int) -> bytes:
+  """Encode the temporary service's bounded on-watch capture lease."""
+  if not 0 < duration_seconds <= MAX_STUDY_CAPTURE_SECONDS:
+    raise ValueError(f"study duration must be between 1 and {MAX_STUDY_CAPTURE_SECONDS} seconds")
+  return STUDY_START_STRUCT.pack(STUDY_START, duration_seconds)
+
+
 def make_disconnect_callback(
     attempt: int,
     intentional: dict[str, bool],
@@ -143,6 +152,7 @@ async def acknowledge_records(
     writer: JsonlWriter,
     attempt: int,
     disconnected: asyncio.Event,
+    acknowledgement_failed: asyncio.Event,
 ) -> None:
   """Acknowledge only records that have been synchronously flushed to JSONL."""
 
@@ -162,6 +172,10 @@ async def acknowledge_records(
               "error": f"{type(error).__name__}: {error}",
           }
       )
+      # An empty queue is not evidence of a durable acknowledgement. Keep the
+      # watch FIFO intact, then let the reconnect path FLUSH this front record
+      # again rather than allowing the session-end STOP to discard it.
+      acknowledgement_failed.set()
       disconnected.set()
       return
     finally:
@@ -169,7 +183,9 @@ async def acknowledge_records(
 
 
 async def wait_for_durable_drain(
-    acknowledgements: asyncio.Queue[int], last_record_at: dict[str, float]
+    acknowledgements: asyncio.Queue[int],
+    last_record_at: dict[str, float],
+    acknowledgement_failed: asyncio.Event,
 ) -> bool:
   """Wait until acknowledgements are durable and no flushed record arrives.
 
@@ -181,6 +197,8 @@ async def wait_for_durable_drain(
 
   deadline = monotonic() + DRAIN_TIMEOUT_SECONDS
   while monotonic() < deadline:
+    if acknowledgement_failed.is_set():
+      return False
     try:
       await asyncio.wait_for(acknowledgements.join(), timeout=0.25)
     except asyncio.TimeoutError:
@@ -238,6 +256,8 @@ async def record(
           "address": address,
           "adapter": adapter,
           "duration_seconds": duration_seconds,
+          "watch_capture_lease_seconds": duration_seconds,
+          "watch_capture_lease_max_seconds": MAX_STUDY_CAPTURE_SECONDS,
           "return_grace_seconds": return_grace_seconds,
           "label": label,
           "algorithm": algorithm,
@@ -261,6 +281,7 @@ async def record(
       subscribed = False
       client: BleakClient | None = None
       acknowledgements: asyncio.Queue[int] = asyncio.Queue()
+      acknowledgement_failed = asyncio.Event()
       acknowledgement_task: asyncio.Task[None] | None = None
       recovered_connection = ever_connected
       last_record_at = {"value": monotonic()}
@@ -315,7 +336,7 @@ async def record(
         ever_connected = True
         writer.write({"event": "connected", "attempt": attempt})
         acknowledgement_task = asyncio.create_task(
-            acknowledge_records(client, acknowledgements, writer, attempt, disconnected)
+            acknowledge_records(client, acknowledgements, writer, attempt, disconnected, acknowledgement_failed)
         )
 
         await client.start_notify(STUDY_RECORD, on_record)
@@ -327,7 +348,7 @@ async def record(
           if target_elapsed:
             mark_target_elapsed("collection_never_started")
             return 1
-          await client.write_gatt_char(STUDY_CONTROL, STUDY_START, response=True)
+          await client.write_gatt_char(STUDY_CONTROL, make_study_start(duration_seconds), response=True)
           study_started = True
           writer.write({"event": "study_started", "attempt": attempt})
         else:
@@ -345,25 +366,30 @@ async def record(
 
         if target_elapsed:
           mark_target_elapsed("reconnected_for_drain")
-          drained = await wait_for_durable_drain(acknowledgements, last_record_at)
+          drained = await wait_for_durable_drain(acknowledgements, last_record_at, acknowledgement_failed)
           writer.write({"event": "soft_end_drain", "attempt": attempt, "drained": drained})
-          await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
-          study_started = False
-          collection_complete = True
-          writer.write({"event": "study_stopped", "attempt": attempt})
-          return 0
+          if drained:
+            await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
+            study_started = False
+            collection_complete = True
+            writer.write({"event": "study_stopped", "attempt": attempt})
+            return 0
+          # Keep the study active. The finally block releases this damaged
+          # connection and the next attempt will subscribe and FLUSH again.
+          continue
 
         try:
           await asyncio.wait_for(disconnected.wait(), timeout=max(0.0, collection_deadline - monotonic()))
         except asyncio.TimeoutError:
           mark_target_elapsed("connected_at_target")
-          drained = await wait_for_durable_drain(acknowledgements, last_record_at)
+          drained = await wait_for_durable_drain(acknowledgements, last_record_at, acknowledgement_failed)
           writer.write({"event": "soft_end_drain", "attempt": attempt, "drained": drained})
-          await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
-          study_started = False
-          collection_complete = True
-          writer.write({"event": "study_stopped", "attempt": attempt})
-          return 0
+          if drained:
+            await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
+            study_started = False
+            collection_complete = True
+            writer.write({"event": "study_stopped", "attempt": attempt})
+            return 0
       except Exception as error:
         event = "subscribe_error" if connected else "connect_error"
         writer.write({"event": event, "attempt": attempt, "error": f"{type(error).__name__}: {error}"})
@@ -433,8 +459,8 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
   args = parse_args()
-  if args.duration <= 0:
-    print("--duration must be positive", file=sys.stderr)
+  if not 0 < args.duration <= MAX_STUDY_CAPTURE_SECONDS:
+    print(f"--duration must be between 1 and {MAX_STUDY_CAPTURE_SECONDS} seconds", file=sys.stderr)
     return 2
   if args.return_grace < 0:
     print("--return-grace must be zero or positive", file=sys.stderr)

@@ -146,8 +146,12 @@ namespace Pinetime {
       uint8_t filteredHrsTailIndex;
       Utility::RLS<adaptiveLength, noiseChannels> accAdaptive = Utility::RLS<adaptiveLength, noiseChannels>(adaptiveMu);
 
+      // The real-valued input is normalised here before it is packed into the
+      // complex FFT working buffer. Keep it distinct from the spectrum: a
+      // flat float view of std::complex storage does not map frequency bin N
+      // to float N.
+      std::array<float, fftLength> fftArray;
       std::array<std::complex<float>, fftLength / 2> complexFftArray;
-      std::span<float, fftLength> fftArray {reinterpret_cast<float*>(complexFftArray.data()), fftLength};
 
       Utility::IIRFilter<prominenceCoeffs.size()> prominenceFilter = Utility::IIRFilter(prominenceCoeffs, prominenceInitialState);
 

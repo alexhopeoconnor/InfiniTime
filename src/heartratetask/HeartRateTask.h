@@ -63,6 +63,7 @@ namespace Pinetime {
       void CaptureStudySensorSample(uint16_t hrs, uint16_t als, const Drivers::Bma421::Values& motionValues);
       void ReportStudyOutcome(Controllers::HrStudyOutcome outcome, uint8_t bpm);
       void DrainStudyBuffer();
+      void ExpireStudyCaptureIfNeeded(TickType_t now);
 #endif
 
       [[nodiscard]] bool BackgroundMeasurementNeeded() const;
@@ -101,7 +102,10 @@ namespace Pinetime {
       int16_t studyPreviousZ = 0;
       bool studyHasPreviousMotion = false;
       bool studySessionActive = false;
+      bool studyCaptureActive = false;
       bool studyWindowReported = false;
+      TickType_t studyCaptureStartedAt = 0;
+      TickType_t studyCaptureDuration = 0;
       Controllers::HrStudyOutcome studyLastOutcome = Controllers::HrStudyOutcome::NotEnoughData;
 #endif
     };
