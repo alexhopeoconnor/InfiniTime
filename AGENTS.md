@@ -133,8 +133,12 @@ Before an OTA, all of the following are mandatory:
 7. Run `scripts/elixir-release-verify.sh`, then send exactly the verified
    application archive with `itctl --socket-path /tmp/elixir-itd/itd.sock
    firmware upgrade --archive <absolute-application-zip>`. Keep the client in
-   the foreground until it exits. This uses 20-byte Legacy-DFU packets and can
-   take about nine minutes; do not start another BLE client or interrupt it.
+   the foreground until it exits, then retain the daemon and its BLE connection
+   for at least 10 seconds before stopping it. The Legacy-DFU activate/reset
+   command is write-without-response, so closing the daemon immediately can
+   leave an otherwise validated image staged but not activated. This uses
+   20-byte packets and can take about nine minutes; do not start another BLE
+   client or interrupt it.
 8. After the expected reboot/disconnect, stop the daemon. Start a fresh
    DFU-only daemon and require `itctl firmware version` to report the newly
    built version before treating the transfer as successful.

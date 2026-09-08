@@ -296,15 +296,20 @@ XDG_CONFIG_HOME="$itd_cfg" "$itd_run/itctl" --socket-path "$itd_run/itd.sock" fi
 # Send only the application ZIP. Do not interrupt the roughly nine-minute transfer.
 XDG_CONFIG_HOME="$itd_cfg" "$itd_run/itctl" --socket-path "$itd_run/itd.sock" \
   firmware upgrade --archive "$archive"
+
+# The final Legacy-DFU activate/reset command is write-without-response.
+# Keep the daemon and BLE link alive long enough for that queued command to
+# reach the watch before terminating the foreground daemon.
+sleep 10
 ```
 
 The archive must contain only `manifest.json`, the application `.bin`, and
 the application `.dat`; it must never contain a bootloader, recovery image, or
-resources. When the client exits, the watch should reboot. Stop the temporary
-daemon, start a fresh DFU-only daemon, and require `firmware version` to report
-the new version. Then check Terminal face/core behaviour on the watch and
-validate it from `Settings -> Firmware`. The fresh daemon is necessary because
-DFU-only mode intentionally does not reconnect after the reboot.
+resources. Once that grace has elapsed, the watch should reboot. Stop the
+temporary daemon, start a fresh DFU-only daemon, and require `firmware version`
+to report the new version. Then check Terminal face/core behaviour on the watch
+and validate it from `Settings -> Firmware`. The fresh daemon is necessary
+because DFU-only mode intentionally does not reconnect after the reboot.
 
 ## Building and maintaining
 
