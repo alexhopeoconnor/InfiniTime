@@ -20,20 +20,29 @@ that matching acknowledgement removes the front record. On reconnect the
 logger subscribes, then explicitly requests `FLUSH` once its callback and ACK
 worker are ready. Its drain quiet period begins only after that `FLUSH` write
 is accepted, so a delayed first retained indication cannot be mistaken for an
-empty FIFO. A retry may therefore repeat a sequence, which the logger
+empty FIFO. If an ACK write fails, the logger does not send `STOP`; it
+reconnects and retries the retained front record. A retry may therefore repeat
+a sequence, which the logger
 deduplicates while still acknowledging it. Amber `buf` means the watch is
 collecting while the desktop is absent, blue `tx` / `ack` means an indication
 or host acknowledgement is pending, and green `ok` means no record awaits
-host acknowledgement. Power loss, a reboot, or more than 128 completed
-windows discards pending RAM records.
+host acknowledgement. `START` carries a capture lease of at most 45 minutes.
+When that lease expires the watch stops adding study records but retains its
+FIFO for a later `FLUSH` and durable ACK; `STOP` then ends the temporary
+transport. This makes a delayed return safe without pretending the RAM FIFO is
+overnight storage. Power loss, a reboot, or more than 128 completed windows
+before the lease is acknowledged discards pending RAM records.
 
 ## Safety and runtime boundary
 
 Python runs only inside the image built from this directory. The recording
 container has no network, no capabilities, a read-only root filesystem, a
-small temporary filesystem, and only two host mounts: the read-only local
-BlueZ D-Bus socket and the private output directory. It does not scan, pair,
-listen on a port, change Bluetooth settings, or flash firmware. The container
+small temporary filesystem, and only three host mounts: the read-only local
+BlueZ D-Bus socket, the private output directory, and the read-only current
+recorder script. The summary and comparison wrappers likewise mount their
+current local analysis scripts read-only. This keeps execution inside Docker
+while preventing an offline image from silently running stale reviewed code.
+It does not scan, pair, listen on a port, change Bluetooth settings, or flash firmware. The container
 uses `apparmor=unconfined` solely because Docker's default AppArmor profile
 blocks BlueZ subscriptions over the explicitly mounted system D-Bus socket;
 it does not add host networking, privileged mode, raw-HCI access, or Linux
@@ -53,23 +62,26 @@ firmware installed:
 ./scripts/hr-study/record.sh --label baseline-004 --algorithm baseline --duration 720
 ```
 
-`--duration` is the collection target, not an appointment the wearer must
-attend. If the watch is connected at that point, the logger drains queued ACKs,
-sends `STOP`, and exits. If it is away, the default `--return-grace 900` keeps
-the recorder retrying for another 15 minutes. On return it subscribes, sends
-`FLUSH`, drains the retained FIFO, sends `STOP`, and exits. The watch must keep
-collecting until it receives that stop command, so a delayed return can add
-some post-target records; the JSONL records both the target and actual elapsed
-duration. Use `--return-grace 0` only for diagnostics where abandoning an
-unreconciled session is acceptable; normal profiles should retain the default.
+`--duration` is the on-watch capture lease, not an appointment the wearer must
+attend. It defaults to 12 minutes and is capped at 45 minutes because the
+watch has only a 128-record RAM FIFO. If the watch is connected at the capture
+deadline, the logger drains queued ACKs, sends `STOP`, and exits. If it is
+away, the watch stops adding records at its own deadline and retains the
+captured FIFO. The default `--return-grace 900` keeps the recorder retrying for
+another 15 minutes; on return it subscribes, sends `FLUSH`, drains the retained
+records, sends `STOP`, and exits. A longer return grace is safe when the
+desktop remains awake: it waits for recovery but does not make the watch retain
+more than the lease. Use `--return-grace 0` only for diagnostics where
+abandoning an unreconciled session is acceptable; normal profiles should retain
+the default.
 
-For everyday profiles, use a 20- or 30-minute target, wear the watch normally,
-walk around, then return and sit/type without watching the clock. At a
-30-second background interval the 128-record RAM FIFO covers roughly 64
-minutes, including a 12-minute target plus the default return grace. The
-logger reconnects every 15 seconds using the existing BlueZ paired-device
-object. Initial connection subscribes then sends `START`; a reconnect
-subscribes, then explicitly sends `FLUSH`.
+For everyday profiles, use the default 12-minute lease, wear the watch
+normally, walk around, then return and sit/type without watching the clock. At
+a 30-second background interval the 128-record RAM FIFO covers roughly an
+hour; the 45-minute maximum leaves a margin for variation in completed-window
+cadence. The logger reconnects every 15 seconds using the existing BlueZ paired
+device object. Initial connection subscribes then sends the duration-bearing
+`START`; a reconnect subscribes, then explicitly sends `FLUSH`.
 
 Each output is new, mode-0600 JSONL under ignored `scripts/hr-study/data/`.
 Analyse without host Python or a BLE connection:
@@ -80,10 +92,15 @@ Analyse without host Python or a BLE connection:
 ```
 
 The comparison uses actual measurement-window outcomes, including unchanged
-accepted BPMs. It reports acceptance rate, first accepted time, outcome mix,
-accepted-BPM stability, sequence gaps, acknowledged/unacknowledged records,
-reconnect losses, and records delivered after a reconnect. A record delivered
-after reconnect is evidence of recovery, but cannot prove it was created while
+accepted BPMs. It reports acceptance rate, time from the first completed
+window to the first accepted window (using watch ticks, so cached records do
+not look artificially late), outcome mix, accepted-BPM stability, sequence gaps,
+the recorded estimator profile, host-observed ACK confirmations, reconnect
+losses, and records delivered after a reconnect. An `ack ?` result means the
+host did not observe an ACK success response; it does **not** mean the JSONL
+measurement was lost or that the watch necessarily retained it, because a BLE
+link can drop after the watch processes the ACK. A record delivered after
+reconnect is evidence of recovery, but cannot prove it was created while
 disconnected; that distinction is not encoded into the compact watch record.
 Treat a `collection_complete: false` session as transport diagnostics, not a
 baseline profile.

@@ -38,6 +38,7 @@ namespace Pinetime::Controllers {
   enum class HrStudyTransportState : uint8_t {
     Off,
     Buffering,
+    CaptureComplete,
     Sending,
     AwaitingAcknowledgement,
     Connected,

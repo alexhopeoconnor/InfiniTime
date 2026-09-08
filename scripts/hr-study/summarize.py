@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import argparse
 from collections import Counter
-from datetime import datetime
 import json
 from pathlib import Path
 import statistics
@@ -54,11 +53,17 @@ def summary(path: Path) -> dict[str, Any]:
   outcomes = Counter(str(event.get("outcome", "unknown")) for event in records)
   accepted = [event for event in records if event.get("outcome") == "accepted"]
   sequence_gaps = sum(max(0, int(right["sequence"]) - int(left["sequence"]) - 1) for left, right in zip(records, records[1:]))
-  first_accepted_seconds: float | None = None
-  if accepted and start.get("host_time_utc") and accepted[0].get("arrival_utc"):
-    session_start = datetime.fromisoformat(str(start["host_time_utc"]))
-    first_accepted = datetime.fromisoformat(str(accepted[0]["arrival_utc"]))
-    first_accepted_seconds = round((first_accepted - session_start).total_seconds(), 3)
+  # Arrival time is a transport timestamp, not a measurement timestamp.  A
+  # recovered FIFO can be delivered minutes or hours after it was measured, so
+  # comparing it to session_start would make cached sessions appear to acquire
+  # a pulse late.  Watch ticks are captured with the measurement itself.  The
+  # logger has no tick at START, so report the honest, comparable interval from
+  # the first completed window rather than inventing a session-start offset.
+  first_accepted_after_first_record_seconds: float | None = None
+  tick_hz = start.get("watch_tick_hz")
+  if accepted and records and isinstance(tick_hz, int) and tick_hz > 0:
+    first_tick = int(records[0]["watch_tick"])
+    first_accepted_after_first_record_seconds = round((int(accepted[0]["watch_tick"]) - first_tick) / tick_hz, 3)
   accepted_bpms = [int(event["bpm"]) for event in accepted]
   acknowledged_sequences = {
       int(event["sequence"])
@@ -66,6 +71,8 @@ def summary(path: Path) -> dict[str, Any]:
       if event.get("event") == "record_acknowledged" and "sequence" in event
   }
   record_sequences = {int(record["sequence"]) for record in records}
+  record_profiles = {int(record["algorithm_profile"]) for record in records if "algorithm_profile" in record}
+  expected_profile = {"baseline": 0, "ppgv2": 1}.get(start.get("algorithm"))
   result: dict[str, Any] = {
       "file": str(path),
       "label": start.get("label"),
@@ -75,17 +82,25 @@ def summary(path: Path) -> dict[str, Any]:
       "accepted_windows": len(accepted),
       "acceptance_rate": round(len(accepted) / len(records), 4) if records else None,
       "outcomes": dict(sorted(outcomes.items())),
-      "first_accepted_seconds": first_accepted_seconds,
+      "first_accepted_after_first_record_seconds": first_accepted_after_first_record_seconds,
       "sequence_gaps": sequence_gaps,
       "recovered_after_disconnect": sum(bool(event.get("recovered_after_disconnect")) for event in records),
       "connection_losses": end.get("connection_losses", 0),
       "connection_attempts": end.get("connection_attempts", 0),
       "duplicate_records": end.get("duplicate_records", 0),
+      "algorithm_profiles": sorted(record_profiles),
+      # The host can prove it durably wrote every JSONL record. It cannot
+      # always prove that it received an ATT success response: a link may drop
+      # after the watch processed ACK(sequence). Name that observation honestly
+      # instead of claiming the record is absent from the result set.
+      "algorithm_profile_matches_requested": None
+      if expected_profile is None or not record_profiles
+      else record_profiles == {expected_profile},
   }
   if int(start.get("schema_version", 0)) >= 2:
     result["acknowledged_records"] = len(acknowledged_sequences.intersection(record_sequences))
-    result["unacknowledged_records"] = len(record_sequences.difference(acknowledged_sequences))
-    result["ack_errors"] = sum(event.get("event") == "record_ack_error" for event in events)
+    result["host_ack_unconfirmed_records"] = len(record_sequences.difference(acknowledged_sequences))
+    result["ack_write_errors"] = sum(event.get("event") == "record_ack_error" for event in events)
   if "return_grace_seconds" in start or "collection_complete" in end:
     result["target_duration_seconds"] = end.get("target_duration_seconds", start.get("duration_seconds"))
     result["return_grace_seconds"] = end.get("return_grace_seconds", start.get("return_grace_seconds"))

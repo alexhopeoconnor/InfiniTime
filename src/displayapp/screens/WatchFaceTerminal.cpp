@@ -187,8 +187,14 @@ void WatchFaceTerminal::Refresh() {
         const auto age = heartRateAgeSeconds.Get();
         if (heartbeat.Get() == 0) {
           lv_label_set_text_static(heartbeatValue, "?");
+        } else if (age < 60) {
+          // An explicit age is clearer than a clock-like 00:34 and avoids
+          // spending scarce horizontal space on leading zeroes.
+          lv_label_set_text_fmt(heartbeatValue, "~%d +%lus", heartbeat.Get(), static_cast<unsigned long>(age));
         } else {
-          lv_label_set_text_fmt(heartbeatValue, "~%d %02lu:%02lu", heartbeat.Get(), age / 60, age % 60);
+          // One- to two-minute-old values are degraded, not precise
+          // telemetry; compact whole minutes are enough on this display.
+          lv_label_set_text_fmt(heartbeatValue, "~%d +%lum", heartbeat.Get(), static_cast<unsigned long>(age / 60));
         }
       };
       if (heartRateEnabledChanged || powerPresentChanged || heartbeat.IsUpdated() || heartbeatRunning.IsUpdated() ||
@@ -249,6 +255,10 @@ void WatchFaceTerminal::Refresh() {
     switch (studyTransportState.Get()) {
       case Controllers::HrStudyTransportState::Buffering:
         lv_label_set_text_fmt(connectState, "#ffffff %s# buf", Symbols::bluetooth);
+        lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
+        return;
+      case Controllers::HrStudyTransportState::CaptureComplete:
+        lv_label_set_text_fmt(connectState, "#ffffff %s# hold", Symbols::bluetooth);
         lv_obj_set_style_local_text_color(connectState, LV_LABEL_PART_MAIN, LV_STATE_DEFAULT, Colors::orange);
         return;
       case Controllers::HrStudyTransportState::Sending:

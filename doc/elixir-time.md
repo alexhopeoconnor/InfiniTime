@@ -46,7 +46,8 @@ recent verified reading is retained and classified as:
 
 - **fresh** for 30 seconds;
 - **stale** for the following 90 seconds, visibly marked with `~` and an age
-  that advances once per second while the face is awake;
+  shown as `+34s` (or compact whole minutes such as `+1m`) while the face is
+  awake;
 - **unavailable** after two minutes, or before the first valid reading.
 
 This is a display/data-quality improvement, not a claim of clinical accuracy.
@@ -109,16 +110,19 @@ ready. The standard Bluetooth Heart Rate Service remains live-only and never
 replays cached values as if they were current. A reboot, power loss, or
 ring-buffer overflow loses pending study records by design.
 
-The recorder's duration is a collection target. If the watch is out of range
-at that point, its default 15-minute return grace keeps the Docker recorder
-alive to reconnect, flush the FIFO, and send `STOP` when the wearer returns.
-The watch necessarily continues capturing until that stop arrives, so delayed
-returns can add post-target records; use a 20- or 30-minute target for normal
-wear rather than treating 12 minutes as an appointment.
+The recorder's duration is an on-watch capture lease. `START` carries that
+lease, capped at 45 minutes because the FIFO is RAM-only. At expiry the watch
+stops adding study records but preserves its FIFO for a later `FLUSH` and
+durable ACK; it does not silently turn an out-of-range test into an unbounded
+capture. If the watch is away, the Docker recorder's default 15-minute return
+grace keeps it alive to reconnect, flush the retained FIFO, and send `STOP`
+when the wearer returns. A longer return grace is safe when the desktop remains
+awake, but it does not increase the capture lease or RAM capacity.
 
 During an active study the Terminal Bluetooth row makes this visible without
 adding a new screen: amber `buf` means the watch is collecting while the
-desktop is absent, blue `tx` / `ack` means an indication or host
+desktop is absent; amber `hold` means its bounded capture is complete and its
+FIFO is retained for recovery; blue `tx` / `ack` means an indication or host
 acknowledgement is pending, and green `ok` means no record awaits host
 acknowledgement. The code and its Docker-only recorder are documented in
 [`scripts/hr-study/README.md`](../scripts/hr-study/README.md). The launcher is

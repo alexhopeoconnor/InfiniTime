@@ -1,5 +1,6 @@
 #pragma once
 
+#include <atomic>
 #include <cstdint>
 #include <FreeRTOS.h>
 #include <components/ble/HeartRateService.h>
@@ -83,7 +84,8 @@ namespace Pinetime {
       void SetStudyService(Pinetime::Controllers::ElixirHrStudyService* service);
       Pinetime::Controllers::ElixirHrStudyService* StudyService() const;
       HrStudyTransportState GetStudyTransportState() const;
-      void RequestStudyStart();
+      void RequestStudyStart(uint16_t durationSeconds);
+      uint16_t RequestedStudyDurationSeconds() const;
       void RequestStudyStop();
       void RequestStudyFlush();
       void RequestStudyAcknowledgement();
@@ -99,6 +101,7 @@ namespace Pinetime {
       Pinetime::Controllers::HeartRateService* service = nullptr;
 #ifdef ELIXIR_HR_STUDY
       Pinetime::Controllers::ElixirHrStudyService* studyService = nullptr;
+      std::atomic_uint16_t studyRequestedDurationSeconds {0};
 #endif
     };
   }
