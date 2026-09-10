@@ -88,6 +88,7 @@ namespace Pinetime {
       uint16_t RequestedStudyDurationSeconds() const;
       void RequestStudyStop();
       void RequestStudyFlush();
+      void RequestStudyNextFrame();
       void RequestStudyAcknowledgement();
 #endif
 

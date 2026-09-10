@@ -29,6 +29,7 @@ from bleak.backends.device import BLEDevice
 STUDY_SERVICE = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e401"
 STUDY_CONTROL = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e402"
 STUDY_RECORD = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e403"
+STUDY_DIAGNOSTICS = "b1e3c2d0-6f14-4d72-9b91-48c4d1a0e404"
 STUDY_START = 0x01
 STUDY_STOP = b"\x02"
 STUDY_FLUSH = b"\x03"
@@ -39,9 +40,13 @@ DEFAULT_RETURN_GRACE_SECONDS = 15 * 60
 MAX_STUDY_CAPTURE_SECONDS = 45 * 60
 DRAIN_QUIESCENCE_SECONDS = 1.0
 DRAIN_TIMEOUT_SECONDS = 20.0
-RECORD_STRUCT = struct.Struct("<IIHHHBBBBBB")
+SUMMARY_STRUCT = struct.Struct("<BBBHIHHHBBBH")
+DIAGNOSTICS_STRUCT = struct.Struct("<BBBHHBBBbbbBBBHH")
 ACK_STRUCT = struct.Struct("<BI")
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+PROTOCOL_MARKER = 0xE4
+FRAME_KIND_SUMMARY = 0x01
+FRAME_KIND_DIAGNOSTICS = 0x02
 
 OUTCOMES = {
     1: "accepted",
@@ -84,13 +89,40 @@ def bluez_device(address: str, adapter: str) -> BLEDevice:
   return BLEDevice(address, address, {"path": object_path}, -127)
 
 
-def decode_record(packet: bytearray) -> dict[str, int | str | bool]:
-  if len(packet) != RECORD_STRUCT.size:
-    raise ValueError(f"study record must be {RECORD_STRUCT.size} bytes, got {len(packet)}: {packet.hex()}")
+def crc8_atm(packet: bytes | bytearray) -> int:
+  """CRC-8/ATM used by protocol v4; byte 2 is the checksum field itself."""
+  crc = 0
+  for index, byte in enumerate(packet):
+    crc ^= 0 if index == 2 else byte
+    for _ in range(8):
+      crc = (crc << 1) & 0xFF if not (crc & 0x80) else ((crc << 1) & 0xFF) ^ 0x07
+  return crc
 
-  sequence, watch_tick, ppg_mean, ppg_range, motion_level, bpm, outcome, flags, step_delta, ambient, profile_drive = (
-      RECORD_STRUCT.unpack(packet)
-  )
+
+def validate_frame(packet: bytearray, expected_kind: int, expected_size: int) -> tuple[int, int]:
+  if len(packet) != expected_size:
+    raise ValueError(f"study frame must be {expected_size} bytes, got {len(packet)}: {packet.hex()}")
+  marker, kind_and_flags, checksum = packet[:3]
+  if marker != PROTOCOL_MARKER:
+    raise ValueError(f"unexpected study protocol marker 0x{marker:02x}")
+  kind = kind_and_flags >> 5
+  if kind != expected_kind:
+    raise ValueError(f"unexpected study frame kind {kind}, expected {expected_kind}")
+  if checksum != crc8_atm(packet):
+    raise ValueError("study frame checksum mismatch")
+  return kind_and_flags & 0x1F, checksum
+
+
+def decode_summary(packet: bytearray) -> dict[str, int | str | bool]:
+  flags, _ = validate_frame(packet, FRAME_KIND_SUMMARY, SUMMARY_STRUCT.size)
+  _, _, _, sequence, watch_tick, ppg_mean, ppg_range, motion_level, bpm, outcome, sensor_configuration, ambient_maximum = SUMMARY_STRUCT.unpack(packet)
+  if outcome not in OUTCOMES:
+    raise ValueError(f"unknown study outcome {outcome}")
+  if flags & 0x03 not in (0x01, 0x02):
+    raise ValueError(f"invalid study measurement-mode flags 0x{flags:02x}")
+  sensor_drive = sensor_configuration & 0x07
+  sensor_gain = (sensor_configuration >> 3) & 0x03
+  sensor_state = (sensor_configuration >> 5) & 0x03
   return {
       "sequence": sequence,
       "watch_tick": watch_tick,
@@ -103,11 +135,58 @@ def decode_record(packet: bytearray) -> dict[str, int | str | bool]:
       "background_measurement": bool(flags & 0x01),
       "foreground_measurement": bool(flags & 0x02),
       "power_present": bool(flags & 0x04),
-      "step_delta": step_delta,
-      "ambient_level": ambient,
-      "algorithm_profile": profile_drive & 0x03,
-      "sensor_drive": profile_drive >> 2,
+      "algorithm_profile": 1 if flags & 0x08 else 0,
+      "sensor_drive": sensor_drive,
+      "sensor_gain": sensor_gain,
+      "sensor_state": sensor_state,
+      "ambient_maximum": ambient_maximum,
       "packet_hex": packet.hex(),
+  }
+
+
+def decode_diagnostics(packet: bytearray) -> dict[str, int | bool | None]:
+  validate_frame(packet, FRAME_KIND_DIAGNOSTICS, DIAGNOSTICS_STRUCT.size)
+  (
+      _,
+      _,
+      _,
+      sequence,
+      sample_count,
+      analysis_count,
+      strongest_bin,
+      locked_bin,
+      strongest_energy_tenths,
+      locked_energy_tenths,
+      rolling_energy_tenths,
+      ppg_flags,
+      sensor_transitions,
+      queue_drops,
+      stack_high_water_words,
+      minimum_free_heap_bytes,
+  ) = DIAGNOSTICS_STRUCT.unpack(packet)
+  if ppg_flags & ~0x07:
+    raise ValueError(f"invalid PPG diagnostic flags 0x{ppg_flags:02x}")
+
+  def energy(value: int) -> float | None:
+    return None if value == -128 else value / 10.0
+
+  return {
+      "sequence": sequence,
+      "ppg_sample_count": sample_count,
+      "ppg_analysis_count": analysis_count,
+      "ppg_strongest_bin": strongest_bin,
+      "ppg_locked_bin": None if locked_bin == 0xFF else locked_bin,
+      "ppg_strongest_energy": energy(strongest_energy_tenths),
+      "ppg_locked_energy": energy(locked_energy_tenths),
+      "ppg_rolling_energy": energy(rolling_energy_tenths),
+      "ppg_sufficient_data": bool(ppg_flags & 0x01),
+      "ppg_strong_candidate": bool(ppg_flags & 0x02),
+      "ppg_lock_active": bool(ppg_flags & 0x04),
+      "sensor_transitions": sensor_transitions,
+      "heart_rate_queue_drops": queue_drops,
+      "heart_rate_stack_high_water_words": stack_high_water_words,
+      "minimum_free_heap_bytes": minimum_free_heap_bytes,
+      "diagnostics_packet_hex": packet.hex(),
   }
 
 
@@ -186,6 +265,8 @@ async def wait_for_durable_drain(
     acknowledgements: asyncio.Queue[int],
     last_record_at: dict[str, float],
     acknowledgement_failed: asyncio.Event,
+    protocol_fault: asyncio.Event,
+    pending_summaries: dict[int, dict[str, Any]],
 ) -> bool:
   """Wait until acknowledgements are durable and no flushed record arrives.
 
@@ -197,13 +278,13 @@ async def wait_for_durable_drain(
 
   deadline = monotonic() + DRAIN_TIMEOUT_SECONDS
   while monotonic() < deadline:
-    if acknowledgement_failed.is_set():
+    if acknowledgement_failed.is_set() or protocol_fault.is_set():
       return False
     try:
       await asyncio.wait_for(acknowledgements.join(), timeout=0.25)
     except asyncio.TimeoutError:
       continue
-    if monotonic() - last_record_at["value"] >= DRAIN_QUIESCENCE_SECONDS:
+    if not pending_summaries and monotonic() - last_record_at["value"] >= DRAIN_QUIESCENCE_SECONDS:
       return True
     await asyncio.sleep(0.05)
   return False
@@ -231,7 +312,9 @@ async def record(
   accepted_records = 0
   recovered_records = 0
   duplicate_records = 0
+  protocol_errors = 0
   seen_sequences: set[int] = set()
+  pending_summaries: dict[int, dict[str, Any]] = {}
   collection_complete = False
   target_elapsed_logged = False
 
@@ -262,8 +345,10 @@ async def record(
           "label": label,
           "algorithm": algorithm,
           "watch_tick_hz": 1024,
+          "study_protocol_version": 4,
           "study_service": STUDY_SERVICE,
           "record_characteristic": STUDY_RECORD,
+          "diagnostics_characteristic": STUDY_DIAGNOSTICS,
       }
   )
 
@@ -278,29 +363,70 @@ async def record(
       intentional = {"value": False}
       loss_logged = {"value": False}
       connected = False
-      subscribed = False
+      subscribed_characteristics: list[str] = []
       client: BleakClient | None = None
       acknowledgements: asyncio.Queue[int] = asyncio.Queue()
       acknowledgement_failed = asyncio.Event()
       acknowledgement_task: asyncio.Task[None] | None = None
       recovered_connection = ever_connected
       last_record_at = {"value": monotonic()}
+      protocol_fault = asyncio.Event()
 
       def on_loss() -> None:
         nonlocal connection_losses
         connection_losses += 1
 
-      def on_record(_: int, packet: bytearray) -> None:
+      def mark_protocol_fault(frame: str, packet: bytearray, error: Exception | str) -> None:
+        nonlocal protocol_errors
+        protocol_errors += 1
+        writer.write(
+            {
+                "event": "protocol_integrity_error",
+                "attempt": attempt,
+                "frame": frame,
+                "packet_hex": packet.hex(),
+                "error": str(error),
+            }
+        )
+        # Do not ACK a frame whose integrity cannot be proven. The normal
+        # path below sends STOP, deliberately discarding this invalid study
+        # rather than allowing a corrupted FIFO entry to be reused as data.
+        protocol_fault.set()
+        disconnected.set()
+
+      def on_summary(_: int, packet: bytearray) -> None:
+        last_record_at["value"] = monotonic()
+        try:
+          decoded = decode_summary(packet)
+          sequence = int(decoded["sequence"])
+          if sequence in seen_sequences:
+            # A lost ACK makes the watch replay the pair. Keep the summary
+            # until its matching diagnostic frame arrives, then ACK it again.
+            pending_summaries[sequence] = decoded
+            writer.write({"event": "duplicate_summary", "attempt": attempt, **decoded})
+            return
+          previous = pending_summaries.get(sequence)
+          if previous is not None:
+            if previous["packet_hex"] != decoded["packet_hex"]:
+              raise ValueError(f"summary sequence {sequence} changed before diagnostics arrived")
+            writer.write({"event": "duplicate_summary", "attempt": attempt, **decoded})
+            return
+          pending_summaries[sequence] = decoded
+        except Exception as error:  # Keep BlueZ callbacks alive long enough to stop an invalid study cleanly.
+          mark_protocol_fault("summary", packet, error)
+
+      def on_diagnostics(_: int, packet: bytearray) -> None:
         nonlocal received_records, accepted_records, recovered_records, duplicate_records
         last_record_at["value"] = monotonic()
         try:
-          decoded = decode_record(packet)
-          sequence = int(decoded["sequence"])
+          diagnostics = decode_diagnostics(packet)
+          sequence = int(diagnostics["sequence"])
+          decoded = pending_summaries.pop(sequence, None)
+          if decoded is None:
+            raise ValueError(f"diagnostics sequence {sequence} arrived without a matching summary")
           if sequence in seen_sequences:
             duplicate_records += 1
-            writer.write({"event": "duplicate_record", "attempt": attempt, **decoded})
-            # The original JSONL write completed in an earlier connection; an
-            # ACK may have been lost with that link, so acknowledge the retry.
+            writer.write({"event": "duplicate_record", "attempt": attempt, **decoded, **diagnostics})
             acknowledgements.put_nowait(sequence)
             return
           seen_sequences.add(sequence)
@@ -316,6 +442,7 @@ async def record(
                   "recovered_after_disconnect": recovered_connection,
                   "algorithm": algorithm,
                   **decoded,
+                  **diagnostics,
               }
           )
           # JsonlWriter.write() flushes before this queue entry is visible to
@@ -323,7 +450,7 @@ async def record(
           # write-with-response succeeds.
           acknowledgements.put_nowait(sequence)
         except Exception as error:  # Do not let a malformed test packet kill BlueZ callbacks.
-          writer.write({"event": "decode_error", "attempt": attempt, "packet_hex": packet.hex(), "error": str(error)})
+          mark_protocol_fault("diagnostics", packet, error)
 
       try:
         writer.write({"event": "connect_attempt", "attempt": attempt})
@@ -339,9 +466,11 @@ async def record(
             acknowledge_records(client, acknowledgements, writer, attempt, disconnected, acknowledgement_failed)
         )
 
-        await client.start_notify(STUDY_RECORD, on_record)
-        subscribed = True
-        writer.write({"event": "indications_subscribed", "attempt": attempt})
+        await client.start_notify(STUDY_RECORD, on_summary)
+        subscribed_characteristics.append(STUDY_RECORD)
+        await client.start_notify(STUDY_DIAGNOSTICS, on_diagnostics)
+        subscribed_characteristics.append(STUDY_DIAGNOSTICS)
+        writer.write({"event": "indications_subscribed", "attempt": attempt, "frames": ("summary", "diagnostics")})
 
         target_elapsed = monotonic() >= collection_deadline
         if not study_started:
@@ -366,8 +495,16 @@ async def record(
 
         if target_elapsed:
           mark_target_elapsed("reconnected_for_drain")
-          drained = await wait_for_durable_drain(acknowledgements, last_record_at, acknowledgement_failed)
+          drained = await wait_for_durable_drain(acknowledgements, last_record_at, acknowledgement_failed, protocol_fault, pending_summaries)
           writer.write({"event": "soft_end_drain", "attempt": attempt, "drained": drained})
+          if protocol_fault.is_set():
+            try:
+              await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
+              study_started = False
+              writer.write({"event": "study_stopped_after_protocol_error", "attempt": attempt})
+            except Exception as error:
+              writer.write({"event": "stop_after_protocol_error", "attempt": attempt, "error": f"{type(error).__name__}: {error}"})
+            return 1
           if drained:
             await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
             study_started = False
@@ -382,7 +519,7 @@ async def record(
           await asyncio.wait_for(disconnected.wait(), timeout=max(0.0, collection_deadline - monotonic()))
         except asyncio.TimeoutError:
           mark_target_elapsed("connected_at_target")
-          drained = await wait_for_durable_drain(acknowledgements, last_record_at, acknowledgement_failed)
+          drained = await wait_for_durable_drain(acknowledgements, last_record_at, acknowledgement_failed, protocol_fault, pending_summaries)
           writer.write({"event": "soft_end_drain", "attempt": attempt, "drained": drained})
           if drained:
             await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
@@ -390,18 +527,28 @@ async def record(
             collection_complete = True
             writer.write({"event": "study_stopped", "attempt": attempt})
             return 0
+        if protocol_fault.is_set():
+          try:
+            await client.write_gatt_char(STUDY_CONTROL, STUDY_STOP, response=True)
+            study_started = False
+            writer.write({"event": "study_stopped_after_protocol_error", "attempt": attempt})
+          except Exception as error:
+            writer.write({"event": "stop_after_protocol_error", "attempt": attempt, "error": f"{type(error).__name__}: {error}"})
+          return 1
       except Exception as error:
         event = "subscribe_error" if connected else "connect_error"
         writer.write({"event": event, "attempt": attempt, "error": f"{type(error).__name__}: {error}"})
       finally:
         intentional["value"] = True
         if client is not None and client.is_connected:
-          if subscribed:
+          for characteristic in reversed(subscribed_characteristics):
             try:
-              await client.stop_notify(STUDY_RECORD)
-              writer.write({"event": "indications_unsubscribed", "attempt": attempt})
+              await client.stop_notify(characteristic)
+              writer.write({"event": "indications_unsubscribed", "attempt": attempt, "characteristic": characteristic})
             except Exception as error:
-              writer.write({"event": "stop_notify_error", "attempt": attempt, "error": f"{type(error).__name__}: {error}"})
+              writer.write(
+                  {"event": "stop_notify_error", "attempt": attempt, "characteristic": characteristic, "error": f"{type(error).__name__}: {error}"}
+              )
           try:
             await client.disconnect()
             writer.write({"event": "disconnected", "attempt": attempt})
@@ -427,6 +574,7 @@ async def record(
             "accepted_records": accepted_records,
             "recovered_records": recovered_records,
             "duplicate_records": duplicate_records,
+            "protocol_errors": protocol_errors,
             "connection_attempts": connection_attempts,
             "connection_losses": connection_losses,
             "target_duration_seconds": duration_seconds,

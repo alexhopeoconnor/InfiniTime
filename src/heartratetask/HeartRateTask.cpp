@@ -16,6 +16,10 @@ using namespace Pinetime::Applications;
 
 namespace {
   constexpr TickType_t backgroundMeasurementTimeLimit = 30 * configTICK_RATE_HZ;
+
+  inline bool in_isr() {
+    return (SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) != 0;
+  }
 }
 
 std::optional<TickType_t> HeartRateTask::BackgroundMeasurementInterval() const {
@@ -128,7 +132,10 @@ void HeartRateTask::Start() {
   messageQueue = xQueueCreate(10, 1);
   controller.SetHeartRateTask(this);
 
-  if (pdPASS != xTaskCreate(HeartRateTask::Process, "Heartrate", 500, this, 1, &taskHandle)) {
+  // PPGv2's adaptive filtering has a materially deeper call stack than the
+  // upstream estimator. Keep useful headroom and export its actual high-water
+  // mark in temporary study diagnostics.
+  if (pdPASS != xTaskCreate(HeartRateTask::Process, "Heartrate", 700, this, 1, &taskHandle)) {
     APP_ERROR_HANDLER(NRF_ERROR_NO_MEM);
   }
 }
@@ -263,12 +270,15 @@ void HeartRateTask::Work() {
         case Messages::StudyFlush:
           DrainStudyBuffer();
           break;
+        case Messages::StudyNextFrame:
+          DrainStudyBuffer();
+          break;
         case Messages::StudyAcknowledgement:
           if (auto* studyService = controller.StudyService(); studyService != nullptr) {
             uint32_t sequence = 0;
             if (studyService->ConsumeAcknowledgement(sequence)) {
               const auto* record = studyBuffer.Front();
-              const bool accepted = record != nullptr && record->sequence == sequence;
+              const bool accepted = record != nullptr && record->record.sequence == sequence;
               if (accepted) {
                 studyBuffer.PopFront();
               }
@@ -314,9 +324,24 @@ void HeartRateTask::Work() {
 }
 
 void HeartRateTask::PushMessage(HeartRateTask::Messages msg) {
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  xQueueSendFromISR(messageQueue, &msg, &xHigherPriorityTaskWoken);
-  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+  BaseType_t result = pdFAIL;
+  if (in_isr()) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    result = xQueueSendFromISR(messageQueue, &msg, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+  } else {
+    // Heart-rate controls can originate in the NimBLE task as well as an
+    // interrupt. The ISR API is not valid in normal task context; keeping the
+    // send non-blocking also prevents a full HR queue from stalling BLE.
+    result = xQueueSend(messageQueue, &msg, 0);
+  }
+#ifdef ELIXIR_HR_STUDY
+  if (result != pdPASS) {
+    studyQueueDrops.fetch_add(1, std::memory_order_relaxed);
+  }
+#else
+  (void) result;
+#endif
 }
 
 void HeartRateTask::StartMeasurement() {
@@ -394,7 +419,11 @@ void HeartRateTask::HandleSensorData() {
   ppg.Ingest(sensorData.hrs, motionValues.x, motionValues.y, motionValues.z);
 
   std::optional<uint8_t> bpm = std::nullopt;
-  switch (heartRateSensor.AutoGain(sensorData.hrs, sensorData.als)) {
+  const auto sensorState = heartRateSensor.AutoGain(sensorData.hrs, sensorData.als);
+#ifdef ELIXIR_HR_STUDY
+  CaptureStudySensorConfiguration();
+#endif
+  switch (sensorState) {
     case Drivers::Hrs3300::PPGState::NoTouch:
       controller.Update(Controllers::HeartRateController::States::NoTouch, 0);
 #ifdef ELIXIR_HR_STUDY
@@ -410,6 +439,11 @@ void HeartRateTask::HandleSensorData() {
       break;
     case Drivers::Hrs3300::PPGState::Running:
       bpm = ppg.HeartRate();
+#ifdef ELIXIR_HR_STUDY
+      // HeartRate() can run an FFT analysis before returning a new estimate.
+      // Snapshot its diagnostics before an accepted window is emitted.
+      CaptureStudyPpgDiagnostics();
+#endif
       if (bpm.has_value()) {
         controller.Update(Controllers::HeartRateController::States::Running, bpm.value());
 #ifdef ELIXIR_HR_STUDY
@@ -499,12 +533,20 @@ void HeartRateTask::ResetStudyMeasurementStats() {
   studyPpgMax = 0;
   studyPpgSamples = 0;
   studyMotionLevel = 0;
-  studyAmbientLevel = 0;
+  studyAmbientMaximum = 0;
+  studyPpgAnalyses = 0;
+  studyPpgLastAnalysisGeneration = ppg.GetDiagnostics().analysisGeneration;
+  studyPpgDiagnostics = ppg.GetDiagnostics();
+  studySensorConfiguration = 0;
+  studyLastSensorConfiguration = 0;
+  studySensorTransitions = 0;
   studyStepStart = 0;
   studyCurrentSteps = 0;
   studyHasPreviousMotion = false;
+  studyHasSensorConfiguration = false;
   studyWindowReported = false;
   studyLastOutcome = Controllers::HrStudyOutcome::NotEnoughData;
+  studyQueueDrops.store(0, std::memory_order_relaxed);
 }
 
 void HeartRateTask::CaptureStudySensorSample(uint16_t hrs, uint16_t als, const Drivers::Bma421::Values& motionValues) {
@@ -512,7 +554,7 @@ void HeartRateTask::CaptureStudySensorSample(uint16_t hrs, uint16_t als, const D
   studyPpgMin = std::min(studyPpgMin, hrs);
   studyPpgMax = std::max(studyPpgMax, hrs);
   studyPpgSamples++;
-  studyAmbientLevel = std::max(studyAmbientLevel, static_cast<uint8_t>(std::min<uint16_t>(255, als >> 8)));
+  studyAmbientMaximum = std::max(studyAmbientMaximum, als);
 
   studyCurrentSteps = motionValues.steps;
   if (!studyHasPreviousMotion) {
@@ -533,29 +575,66 @@ void HeartRateTask::CaptureStudySensorSample(uint16_t hrs, uint16_t als, const D
   studyPreviousZ = motionValues.z;
 }
 
+void HeartRateTask::CaptureStudyPpgDiagnostics() {
+  const auto diagnostics = ppg.GetDiagnostics();
+  const uint16_t analyses = static_cast<uint16_t>(diagnostics.analysisGeneration - studyPpgLastAnalysisGeneration);
+  studyPpgAnalyses = std::min<uint16_t>(UINT8_MAX, studyPpgAnalyses + analyses);
+  studyPpgLastAnalysisGeneration = diagnostics.analysisGeneration;
+  studyPpgDiagnostics = diagnostics;
+}
+
+void HeartRateTask::CaptureStudySensorConfiguration() {
+  const uint8_t configuration = heartRateSensor.StudyConfiguration();
+  if (studyHasSensorConfiguration && configuration != studyLastSensorConfiguration) {
+    studySensorTransitions = std::min<uint8_t>(UINT8_MAX, static_cast<uint8_t>(studySensorTransitions + 1));
+  }
+  studySensorConfiguration = configuration;
+  studyLastSensorConfiguration = configuration;
+  studyHasSensorConfiguration = true;
+}
+
 void HeartRateTask::ReportStudyOutcome(Controllers::HrStudyOutcome outcome, uint8_t bpm) {
   if (!studyCaptureActive || studyWindowReported) {
     return;
   }
 
-  Controllers::HrStudyRecord record {};
-  record.sequence = studySequence++;
+  Controllers::HrStudySample sample {};
+  auto& record = sample.record;
+  record.sequence = static_cast<uint16_t>(studySequence++);
   record.watchTick = xTaskGetTickCount();
   record.ppgMean = studyPpgSamples == 0 ? 0 : static_cast<uint16_t>(studyPpgSum / studyPpgSamples);
   record.ppgRange = studyPpgSamples == 0 ? 0 : static_cast<uint16_t>(studyPpgMax - studyPpgMin);
   record.motionLevel = studyMotionLevel;
   record.bpm = bpm;
   record.outcome = static_cast<uint8_t>(outcome);
-  record.flags = state == States::BackgroundMeasuring ? 0x01 : 0x02;
+  uint8_t flags = state == States::BackgroundMeasuring ? Controllers::HrStudyBackgroundMeasurement
+                                                         : Controllers::HrStudyForegroundMeasurement;
   if (battery.IsPowerPresent()) {
-    record.flags |= 0x04;
+    flags |= Controllers::HrStudyPowerPresent;
   }
-  const auto stepDelta = studyCurrentSteps - studyStepStart;
-  record.stepDelta = static_cast<uint8_t>(std::min<uint32_t>(stepDelta, UINT8_MAX));
-  record.ambientLevel = studyAmbientLevel;
-  record.profileDrive = 1; // PPGv2 estimator and its adaptive sensor drive.
+  flags |= Controllers::HrStudyPpgV2;
+  record.kindAndFlags = Controllers::HrStudyFrameHeader(Controllers::HrStudyFrameKind::Summary, flags);
+  record.sensorConfiguration = studySensorConfiguration;
+  record.ambientMaximum = studyAmbientMaximum;
 
-  studyBuffer.Push(record);
+  auto& diagnostics = sample.diagnostics;
+  diagnostics.sequence = record.sequence;
+  diagnostics.sampleCount = studyPpgSamples;
+  diagnostics.analysisCount = static_cast<uint8_t>(studyPpgAnalyses);
+  diagnostics.strongestBin = studyPpgDiagnostics.strongestBin;
+  diagnostics.lockedBin = studyPpgDiagnostics.lockedBin;
+  diagnostics.strongestEnergyTenths = studyPpgDiagnostics.strongestEnergyTenths;
+  diagnostics.lockedEnergyTenths = studyPpgDiagnostics.lockedEnergyTenths;
+  diagnostics.rollingEnergyTenths = studyPpgDiagnostics.rollingEnergyTenths;
+  diagnostics.ppgFlags = studyPpgDiagnostics.flags;
+  diagnostics.sensorTransitions = studySensorTransitions;
+  diagnostics.queueDrops = static_cast<uint8_t>(std::min<uint16_t>(UINT8_MAX, studyQueueDrops.load(std::memory_order_relaxed)));
+  diagnostics.stackHighWaterWords = static_cast<uint16_t>(std::min<UBaseType_t>(UINT16_MAX, uxTaskGetStackHighWaterMark(taskHandle)));
+  diagnostics.minimumFreeHeapBytes = static_cast<uint16_t>(std::min<size_t>(UINT16_MAX, xPortGetMinimumEverFreeHeapSize()));
+  Controllers::FinalizeHrStudyRecord(record);
+  Controllers::FinalizeHrStudyDiagnostics(diagnostics);
+
+  studyBuffer.Push(sample);
   studyWindowReported = true;
   DrainStudyBuffer();
 }

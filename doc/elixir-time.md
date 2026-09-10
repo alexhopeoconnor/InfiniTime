@@ -7,7 +7,7 @@ tag, with `upstream` kept as the official repository remote.
 The device continues to use the established InfiniTime BLE device identity for
 phone compatibility. Its standard Device Information **software revision** is
 `ElixirTime`, while this temporary PPGv2 comparison branch identifies itself as
-firmware revision `1.16.10`; the Terminal watch face identifies the customised
+firmware revision `1.16.11`; the Terminal watch face identifies the customised
 firmware as `elixir@time`. The normal `firmware/elixir-time` baseline remains
 `1.16.9`. These identifiers make the required post-reboot verification
 unambiguous without changing the visible face for an experiment.
@@ -96,10 +96,16 @@ comparing the current estimator with the separate `research/ppgv2` branch. It
 does not belong to normal ElixirTime firmware, does not change persisted
 settings, and does not advertise a new service. A study build registers a
 private, encrypted-control GATT service after the desktop connects. Its
-20-byte indication record contains one completed measurement-window outcome:
-accepted BPM or failure reason, PPG mean/range, compact accelerometer/step and
-ambient context, power/mode flags, and a watch tick. It deliberately sends no
-raw optical samples.
+pair of checksummed 20-byte indication frames contains one completed
+measurement-window outcome and its diagnostic context. The summary has the
+accepted BPM or failure reason, PPG mean/range, compact accelerometer context,
+mode/power flags, actual HRS3300 drive/gain state, maximum ambient reading, and
+a watch tick. Its matching diagnostic frame records PPG analysis/lock/energy
+state, sensor-control transitions, HR task queue drops and stack headroom, and
+the system's minimum free heap. It deliberately sends no raw optical samples.
+The Docker logger will not acknowledge a malformed, unknown, or checksum-failed
+frame; it marks that session invalid and sends `STOP` rather than allowing
+untrusted data into a comparison.
 
 On `research/ppgv2`, the estimator samples the optical sensor and raw
 three-axis accelerometer together at a fixed cadence, applies adaptive motion
@@ -109,7 +115,7 @@ mismatch as a failed test identity; it is never combined with a baseline
 profile. This branch is experimental: do not merge it back to
 `firmware/elixir-time` merely because it builds or flashes.
 
-The HR task stores at most 128 such records in RAM. A normal BLE indication
+The HR task stores at most 128 summary/diagnostic pairs in RAM. A normal BLE indication
 confirmation only proves the desktop Bluetooth stack received a packet, so it
 does not remove the oldest record. The Docker logger flushes and `fsync`s its
 JSONL entry, then explicitly acknowledges that sequence; only then does the

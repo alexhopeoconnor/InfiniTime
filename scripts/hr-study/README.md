@@ -6,13 +6,17 @@ unadvertised GATT service only to the already-paired desktop while a bounded
 study is in progress. Normal ElixirTime builds do not contain this service.
 
 The service has an encrypted control characteristic (`START`, `STOP`, `FLUSH`,
-and a compact sequence `ACK`) plus a 20-byte indication-only record
-characteristic. Each record represents one completed HR measurement window:
-accepted BPM or a reason it failed, PPG summary, compact motion/step/ambient
-context, and the watch tick. It is never raw PPG and is never a replacement
-for the standard live Heart Rate Service.
+and a compact sequence `ACK`) plus two 20-byte indication-only characteristics.
+Each completed HR measurement is a checksummed summary frame followed by its
+checksummed diagnostic frame. Together they carry the outcome, PPG mean/range,
+motion and HRS3300 drive/gain state; PPG analysis, strongest/locked frequency
+bin and energy state; sensor transitions; and heart-rate task stack/queue and
+heap headroom. It is never raw PPG and is never a replacement for the standard
+live Heart Rate Service. The logger writes and `fsync`s both frames as one
+measurement before acknowledging the sequence. A malformed, unknown, or
+checksum-failed frame invalidates the session and is never acknowledged.
 
-The watch keeps 128 records in RAM. A BLE indication confirmation only proves
+The watch keeps 128 summary/diagnostic pairs in RAM. A BLE indication confirmation only proves
 that BlueZ received a packet, so it does **not** discard the record. The
 Docker logger flushes and `fsync`s the JSONL row, then writes
 `ACK(sequence)`; only

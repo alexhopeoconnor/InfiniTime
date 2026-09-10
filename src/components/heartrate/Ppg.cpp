@@ -1,4 +1,5 @@
 #include "components/heartrate/Ppg.h"
+#include <algorithm>
 #include <limits>
 #include <nrf_log.h>
 
@@ -17,6 +18,8 @@ Ppg::Ppg() {
 }
 
 void Ppg::Reset() {
+  const uint16_t analysisGeneration = diagnostics.analysisGeneration;
+  diagnostics = {.analysisGeneration = analysisGeneration};
   ready = false;
   hrsCount = 0;
   filteredHrsTailIndex = 0;
@@ -28,6 +31,10 @@ void Ppg::Reset() {
 
 bool Ppg::SufficientData() const {
   return ready;
+}
+
+Ppg::Diagnostics Ppg::GetDiagnostics() const {
+  return diagnostics;
 }
 
 void Ppg::ScaleHrs(float scaleFactor) {
@@ -250,6 +257,23 @@ void Ppg::RunAlg() {
       lockedHrBin = std::nullopt;
     }
   }
+
+  auto QuantizeEnergy = [](float energy) {
+    if (!std::isfinite(energy)) {
+      return static_cast<int8_t>(INT8_MIN);
+    }
+    const auto tenths = static_cast<int>(std::round(energy * 10.f));
+    return static_cast<int8_t>(std::clamp(tenths, -127, 127));
+  };
+  diagnostics.analysisGeneration++;
+  diagnostics.strongestBin = static_cast<uint8_t>(bestIndex + minFrequencyBin);
+  diagnostics.lockedBin = lockedHrBin.has_value() ? static_cast<uint8_t>(std::round(lockedHrBin.value()) + minFrequencyBin) : 0xff;
+  diagnostics.strongestEnergyTenths = QuantizeEnergy(bestPeakEnergy);
+  diagnostics.lockedEnergyTenths = lockedHrBin.has_value()
+                                     ? QuantizeEnergy(CalculateLogPeakEnergy(std::round(lockedHrBin.value()), roi))
+                                     : static_cast<int8_t>(INT8_MIN);
+  diagnostics.rollingEnergyTenths = QuantizeEnergy(rollingEnergy);
+  diagnostics.flags = (ready ? 0x01U : 0U) | (strongBin.has_value() ? 0x02U : 0U) | (lockedHrBin.has_value() ? 0x04U : 0U);
 }
 
 [[gnu::noinline]] void Ppg::ProminenceFilter() {

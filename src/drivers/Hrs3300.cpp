@@ -107,6 +107,10 @@ void Hrs3300::Disable() {
   ppgState = PPGState::Off;
 }
 
+uint8_t Hrs3300::StudyConfiguration() const {
+  return static_cast<uint8_t>(ppgDrive) | (static_cast<uint8_t>(ppgGain) << 3U) | (static_cast<uint8_t>(ppgState) << 5U);
+}
+
 Hrs3300::PackedHrsAls Hrs3300::ReadHrsAls() {
   static constexpr Registers dataRegisters[] =
     {Registers::C1DataM, Registers::C0DataM, Registers::C0DataH, Registers::C1DataH, Registers::C1DataL, Registers::C0DataL};

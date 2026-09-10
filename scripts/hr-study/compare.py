@@ -34,6 +34,9 @@ def main() -> int:
       ("bpm sd", "accepted_bpm_stdev"),
       ("gaps", "sequence_gaps"),
       ("profile", "algorithm_profile_matches_requested"),
+      ("proto", "study_protocol_version"),
+      ("integrity", "protocol_errors"),
+      ("diag", "diagnostics_complete"),
       ("ack ok", "acknowledged_records"),
       ("ack ?", "host_ack_unconfirmed_records"),
       ("recovered", "recovered_after_disconnect"),
@@ -57,12 +60,14 @@ def main() -> int:
       row
       for row in rows
       if row.get("algorithm_profile_matches_requested") is not True
+      or row.get("protocol_errors", 0) != 0
+      or row.get("diagnostics_complete") is False
   ]
   if invalid_profiles:
     labels = ", ".join(str(row.get("label") or row.get("file")) for row in invalid_profiles)
     print(
-        "Refusing comparison: the recorded estimator profile does not match "
-        f"the requested algorithm for: {labels}",
+        "Refusing comparison: a session has a mismatched estimator profile, "
+        f"protocol-integrity error, or incomplete diagnostics: {labels}",
         file=sys.stderr,
     )
     return 1

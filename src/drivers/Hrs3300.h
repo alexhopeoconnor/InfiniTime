@@ -41,6 +41,9 @@ namespace Pinetime {
       void Disable();
       PackedHrsAls ReadHrsAls();
       PPGState AutoGain(uint16_t hrsAvg, uint16_t currentAls);
+      // Compact current state for temporary study telemetry: drive (bits
+      // 0-2), gain (bits 3-4), and PPG state (bits 5-7).
+      [[nodiscard]] uint8_t StudyConfiguration() const;
 
     private:
       enum class PPGDrive : uint8_t {

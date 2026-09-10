@@ -1,4 +1,5 @@
 #pragma once
+#include <atomic>
 #include <FreeRTOS.h>
 #include <cstdint>
 #include <optional>
@@ -36,6 +37,7 @@ namespace Pinetime {
         StudyStart,
         StudyStop,
         StudyFlush,
+        StudyNextFrame,
         StudyAcknowledgement,
 #endif
       };
@@ -61,6 +63,8 @@ namespace Pinetime {
 #ifdef ELIXIR_HR_STUDY
       void ResetStudyMeasurementStats();
       void CaptureStudySensorSample(uint16_t hrs, uint16_t als, const Drivers::Bma421::Values& motionValues);
+      void CaptureStudyPpgDiagnostics();
+      void CaptureStudySensorConfiguration();
       void ReportStudyOutcome(Controllers::HrStudyOutcome outcome, uint8_t bpm);
       void DrainStudyBuffer();
       void ExpireStudyCaptureIfNeeded(TickType_t now);
@@ -96,17 +100,25 @@ namespace Pinetime {
       uint16_t studyPpgMax = 0;
       uint16_t studyPpgSamples = 0;
       uint16_t studyMotionLevel = 0;
-      uint8_t studyAmbientLevel = 0;
+      uint16_t studyAmbientMaximum = 0;
+      uint16_t studyPpgAnalyses = 0;
+      uint16_t studyPpgLastAnalysisGeneration = 0;
+      uint8_t studySensorConfiguration = 0;
+      uint8_t studyLastSensorConfiguration = 0;
+      uint8_t studySensorTransitions = 0;
       int16_t studyPreviousX = 0;
       int16_t studyPreviousY = 0;
       int16_t studyPreviousZ = 0;
       bool studyHasPreviousMotion = false;
+      bool studyHasSensorConfiguration = false;
       bool studySessionActive = false;
       bool studyCaptureActive = false;
       bool studyWindowReported = false;
       TickType_t studyCaptureStartedAt = 0;
       TickType_t studyCaptureDuration = 0;
       Controllers::HrStudyOutcome studyLastOutcome = Controllers::HrStudyOutcome::NotEnoughData;
+      Controllers::Ppg::Diagnostics studyPpgDiagnostics {};
+      std::atomic_uint16_t studyQueueDrops {0};
 #endif
     };
 

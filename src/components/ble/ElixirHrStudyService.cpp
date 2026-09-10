@@ -22,6 +22,10 @@ namespace {
     .u = {.type = BLE_UUID_TYPE_128},
     .value = {0x03, 0xe4, 0xa0, 0xd1, 0xc4, 0x48, 0x91, 0x9b, 0x72, 0x4d, 0x14, 0x6f, 0xd0, 0xc2, 0xe3, 0xb1},
   };
+  constexpr ble_uuid128_t diagnosticsUuid {
+    .u = {.type = BLE_UUID_TYPE_128},
+    .value = {0x04, 0xe4, 0xa0, 0xd1, 0xc4, 0x48, 0x91, 0x9b, 0x72, 0x4d, 0x14, 0x6f, 0xd0, 0xc2, 0xe3, 0xb1},
+  };
 
   int StudyServiceCallback(uint16_t connectionHandle, uint16_t attributeHandle, ble_gatt_access_ctxt* context, void* arg) {
     auto* service = static_cast<ElixirHrStudyService*>(arg);
@@ -43,6 +47,11 @@ ElixirHrStudyService::ElixirHrStudyService(NimbleController& nimble, HeartRateCo
        .arg = this,
        .flags = BLE_GATT_CHR_F_INDICATE,
        .val_handle = &recordHandle},
+      {.uuid = &diagnosticsUuid.u,
+       .access_cb = StudyServiceCallback,
+       .arg = this,
+       .flags = BLE_GATT_CHR_F_INDICATE,
+       .val_handle = &diagnosticsHandle},
       {0},
     },
     serviceDefinition {
@@ -66,7 +75,7 @@ int ElixirHrStudyService::OnAccess(uint16_t connectionHandle, uint16_t attribute
   if (connectionHandle != nimble.connHandle()) {
     return BLE_ATT_ERR_UNLIKELY;
   }
-  if (!indicationEnabled) {
+  if (!recordIndicationEnabled || !diagnosticsIndicationEnabled) {
     // This older NimBLE snapshot has no symbolic constant for the Bluetooth
     // SIG's "CCCD improperly configured" application error. An unlikely
     // error still rejects the write until the client subscribes, without
@@ -130,12 +139,11 @@ int ElixirHrStudyService::OnAccess(uint16_t connectionHandle, uint16_t attribute
                                 (static_cast<uint32_t>(payload[2]) << 8U) |
                                 (static_cast<uint32_t>(payload[3]) << 16U) |
                                 (static_cast<uint32_t>(payload[4]) << 24U);
-      // The central can persist and acknowledge an indication before the
-      // NimBLE host task delivers its BLE_HS_EDONE callback.  Accept the
-      // matching ACK in either state, but leave it pending until that
-      // callback arrives; HeartRateTask is then the only code that removes
-      // the front record from the buffer.
-      if ((!indicationInFlight && !awaitingHostAcknowledgement) || sequence != pendingSequence) {
+      // The central can persist and acknowledge the *diagnostic* indication
+      // before NimBLE delivers BLE_HS_EDONE. A summary alone is not durable
+      // study data, so it must never unlock FIFO removal.
+      const bool diagnosticConfirmationInFlight = indicationInFlight && indicationFrameKind == HrStudyFrameKind::Diagnostics;
+      if ((!diagnosticConfirmationInFlight && !awaitingHostAcknowledgement) || sequence != pendingSequence) {
         return BLE_ATT_ERR_UNLIKELY;
       }
 
@@ -157,12 +165,16 @@ int ElixirHrStudyService::OnAccess(uint16_t connectionHandle, uint16_t attribute
 }
 
 void ElixirHrStudyService::UpdateIndicationSubscription(uint16_t attributeHandle, bool enabled) {
-  if (attributeHandle != recordHandle) {
+  if (attributeHandle == recordHandle) {
+    recordIndicationEnabled = enabled;
+  } else if (attributeHandle == diagnosticsHandle) {
+    diagnosticsIndicationEnabled = enabled;
+  } else {
     return;
   }
-  indicationEnabled = enabled;
   if (!enabled) {
     indicationInFlight = false;
+    diagnosticsFramePending = false;
     awaitingHostAcknowledgement = false;
     acknowledgementPending = false;
     indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
@@ -170,15 +182,18 @@ void ElixirHrStudyService::UpdateIndicationSubscription(uint16_t attributeHandle
 }
 
 void ElixirHrStudyService::OnDisconnected() {
-  indicationEnabled = false;
+  recordIndicationEnabled = false;
+  diagnosticsIndicationEnabled = false;
   indicationInFlight = false;
+  diagnosticsFramePending = false;
   awaitingHostAcknowledgement = false;
   acknowledgementPending = false;
   indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
 }
 
 void ElixirHrStudyService::OnIndicationComplete(const ble_gap_event& event) {
-  if (!event.notify_tx.indication || event.notify_tx.attr_handle != recordHandle) {
+  if (!event.notify_tx.indication ||
+      (event.notify_tx.attr_handle != recordHandle && event.notify_tx.attr_handle != diagnosticsHandle)) {
     return;
   }
   // NimBLE first reports a successful send (status 0), then reports either
@@ -193,9 +208,18 @@ void ElixirHrStudyService::OnIndicationComplete(const ble_gap_event& event) {
   indicationInFlight = false;
   indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
   if (event.notify_tx.status == BLE_HS_EDONE) {
+    if (indicationFrameKind == HrStudyFrameKind::Summary) {
+      // Each result needs its diagnostic twin before it can be durably
+      // acknowledged. The HR task owns the FIFO, so it queues this next
+      // non-blocking send rather than manipulating the buffer from NimBLE.
+      diagnosticsFramePending = true;
+      heartRateController.RequestStudyNextFrame();
+      return;
+    }
     // The ATT confirmation is only proof that the peer Bluetooth stack
     // received the indication. The record remains in RAM until the Docker
     // logger has flushed JSONL and writes an explicit sequence acknowledgement.
+    diagnosticsFramePending = false;
     awaitingHostAcknowledgement = true;
     // The host may have ACKed immediately after it received the indication.
     // Defer buffer removal until both that ACK and the local confirmation are
@@ -205,6 +229,9 @@ void ElixirHrStudyService::OnIndicationComplete(const ble_gap_event& event) {
     }
   } else {
     NRF_LOG_WARNING("HR study indication was not confirmed: %d", event.notify_tx.status);
+    // Retry from the summary after a later FLUSH or reconnect. A diagnostics
+    // frame without its preceding summary is never useful to the recorder.
+    diagnosticsFramePending = false;
     acknowledgementPending = false;
   }
 }
@@ -214,6 +241,7 @@ void ElixirHrStudyService::SetSessionActive(bool active) {
   captureComplete = false;
   if (!active) {
     indicationInFlight = false;
+    diagnosticsFramePending = false;
     awaitingHostAcknowledgement = false;
     acknowledgementPending = false;
     indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
@@ -226,8 +254,9 @@ void ElixirHrStudyService::SetCaptureComplete(bool complete) {
   }
 }
 
-bool ElixirHrStudyService::TryIndicate(const HrStudyRecord& record) {
-  if (!sessionActive || !indicationEnabled || indicationInFlight || awaitingHostAcknowledgement || acknowledgementPending) {
+bool ElixirHrStudyService::TryIndicate(const HrStudySample& sample) {
+  if (!sessionActive || !recordIndicationEnabled || !diagnosticsIndicationEnabled || indicationInFlight || awaitingHostAcknowledgement ||
+      acknowledgementPending) {
     return false;
   }
   const uint16_t connectionHandle = nimble.connHandle();
@@ -236,17 +265,25 @@ bool ElixirHrStudyService::TryIndicate(const HrStudyRecord& record) {
     return false;
   }
 
-  auto* om = ble_hs_mbuf_from_flat(&record, sizeof(record));
+  const HrStudyFrameKind frameKind = diagnosticsFramePending ? HrStudyFrameKind::Diagnostics : HrStudyFrameKind::Summary;
+  const void* frame = frameKind == HrStudyFrameKind::Summary ? static_cast<const void*>(&sample.record)
+                                                             : static_cast<const void*>(&sample.diagnostics);
+  const uint16_t attributeHandle = frameKind == HrStudyFrameKind::Summary ? recordHandle : diagnosticsHandle;
+  constexpr uint16_t frameSize = sizeof(HrStudyRecord);
+  static_assert(sizeof(HrStudyDiagnostics) == frameSize);
+  auto* om = ble_hs_mbuf_from_flat(frame, frameSize);
   if (om == nullptr) {
     return false;
   }
-  pendingSequence = record.sequence;
+  pendingSequence = sample.record.sequence;
   indicationConnectionHandle = connectionHandle;
+  indicationFrameKind = frameKind;
   indicationInFlight = true;
-  const int result = ble_gattc_indicate_custom(connectionHandle, recordHandle, om);
+  const int result = ble_gattc_indicate_custom(connectionHandle, attributeHandle, om);
   if (result != 0) {
     NRF_LOG_WARNING("HR study indication queue failed: %d", result);
     indicationInFlight = false;
+    diagnosticsFramePending = false;
     indicationConnectionHandle = BLE_HS_CONN_HANDLE_NONE;
     return false;
   }
@@ -292,5 +329,5 @@ HrStudyTransportState ElixirHrStudyService::TransportState() const {
     // available to flush and ACK the retained FIFO after a delayed return.
     return HrStudyTransportState::CaptureComplete;
   }
-  return indicationEnabled ? HrStudyTransportState::Connected : HrStudyTransportState::Buffering;
+  return recordIndicationEnabled && diagnosticsIndicationEnabled ? HrStudyTransportState::Connected : HrStudyTransportState::Buffering;
 }

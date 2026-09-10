@@ -94,6 +94,12 @@ void HeartRateController::RequestStudyFlush() {
   }
 }
 
+void HeartRateController::RequestStudyNextFrame() {
+  if (task != nullptr) {
+    task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyNextFrame);
+  }
+}
+
 void HeartRateController::RequestStudyAcknowledgement() {
   if (task != nullptr) {
     task->PushMessage(Pinetime::Applications::HeartRateTask::Messages::StudyAcknowledgement);

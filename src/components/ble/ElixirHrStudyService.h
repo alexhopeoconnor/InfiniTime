@@ -30,7 +30,7 @@ namespace Pinetime::Controllers {
 
     void SetSessionActive(bool active);
     void SetCaptureComplete(bool complete);
-    bool TryIndicate(const HrStudyRecord& record);
+    bool TryIndicate(const HrStudySample& sample);
     bool ConsumeAcknowledgement(uint32_t& sequence);
     void CompleteAcknowledgement(bool accepted);
     HrStudyTransportState TransportState() const;
@@ -39,19 +39,23 @@ namespace Pinetime::Controllers {
     NimbleController& nimble;
     HeartRateController& heartRateController;
 
-    struct ble_gatt_chr_def characteristicDefinition[3];
+    struct ble_gatt_chr_def characteristicDefinition[4];
     struct ble_gatt_svc_def serviceDefinition[2];
     uint16_t controlHandle = 0;
     uint16_t recordHandle = 0;
+    uint16_t diagnosticsHandle = 0;
 
     std::atomic_bool sessionActive {false};
     std::atomic_bool captureComplete {false};
-    std::atomic_bool indicationEnabled {false};
+    std::atomic_bool recordIndicationEnabled {false};
+    std::atomic_bool diagnosticsIndicationEnabled {false};
     std::atomic_bool indicationInFlight {false};
+    std::atomic_bool diagnosticsFramePending {false};
     std::atomic_bool awaitingHostAcknowledgement {false};
     std::atomic_bool acknowledgementPending {false};
     std::atomic_uint32_t pendingSequence {0};
     std::atomic_uint32_t acknowledgedSequence {0};
     std::atomic_uint16_t indicationConnectionHandle {BLE_HS_CONN_HANDLE_NONE};
+    std::atomic<HrStudyFrameKind> indicationFrameKind {HrStudyFrameKind::Summary};
   };
 }

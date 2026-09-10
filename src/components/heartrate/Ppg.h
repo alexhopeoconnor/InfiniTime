@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <climits>
 #include <cmath>
 #include <complex>
 #include <cstddef>
@@ -16,12 +17,23 @@ namespace Pinetime {
   namespace Controllers {
     class Ppg {
     public:
+      struct Diagnostics {
+        uint16_t analysisGeneration = 0;
+        uint8_t strongestBin = 0;
+        uint8_t lockedBin = 0xff;
+        int8_t strongestEnergyTenths = INT8_MIN;
+        int8_t lockedEnergyTenths = INT8_MIN;
+        int8_t rollingEnergyTenths = INT8_MIN;
+        uint8_t flags = 0;
+      };
+
       Ppg();
       void Ingest(uint16_t hrs, int16_t accX, int16_t accY, int16_t accZ);
       std::optional<uint8_t> HeartRate();
       void Reset();
       [[nodiscard]] bool SufficientData() const;
       void ScaleHrs(float scaleFactor);
+      [[nodiscard]] Diagnostics GetDiagnostics() const;
       static constexpr float sampleDuration = 0.048f;
 
     private:
@@ -158,6 +170,7 @@ namespace Pinetime {
       std::optional<float> lockedHrBin;
       float rollingEnergy;
       bool ready;
+      Diagnostics diagnostics {};
 
       void StoreHrs(float filteredHrs);
       void RunAlg();

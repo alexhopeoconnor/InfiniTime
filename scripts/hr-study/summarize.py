@@ -73,6 +73,11 @@ def summary(path: Path) -> dict[str, Any]:
   record_sequences = {int(record["sequence"]) for record in records}
   record_profiles = {int(record["algorithm_profile"]) for record in records if "algorithm_profile" in record}
   expected_profile = {"baseline": 0, "ppgv2": 1}.get(start.get("algorithm"))
+  protocol_errors = sum(event.get("event") == "protocol_integrity_error" for event in events)
+  protocol_version = start.get("study_protocol_version")
+  diagnostics_complete = None
+  if protocol_version == 4:
+    diagnostics_complete = protocol_errors == 0 and all("ppg_analysis_count" in record for record in records)
   result: dict[str, Any] = {
       "file": str(path),
       "label": start.get("label"),
@@ -96,6 +101,9 @@ def summary(path: Path) -> dict[str, Any]:
       "algorithm_profile_matches_requested": None
       if expected_profile is None or not record_profiles
       else record_profiles == {expected_profile},
+      "study_protocol_version": protocol_version,
+      "protocol_errors": protocol_errors,
+      "diagnostics_complete": diagnostics_complete,
   }
   if int(start.get("schema_version", 0)) >= 2:
     result["acknowledged_records"] = len(acknowledged_sequences.intersection(record_sequences))
