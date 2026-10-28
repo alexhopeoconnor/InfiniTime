@@ -79,6 +79,16 @@ more than the lease. Use `--return-grace 0` only for diagnostics where
 abandoning an unreconciled session is acceptable; normal profiles should retain
 the default.
 
+If the return grace has already expired, do **not** run a new `record.sh`
+session: that would send `START`. Recover the retained completed FIFO instead:
+
+```sh
+./scripts/hr-study/recover.sh --label ppgv2-return --algorithm ppgv2
+```
+
+The recovery launcher subscribes, sends only `FLUSH`, fsyncs and acknowledges
+each paired frame, and sends `STOP` after the FIFO drains.
+
 For everyday profiles, use the default 12-minute lease, wear the watch
 normally, walk around, then return and sit/type without watching the clock. At
 a 30-second background interval the 128-record RAM FIFO covers roughly an

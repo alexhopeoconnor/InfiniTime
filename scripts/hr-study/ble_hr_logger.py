@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Record temporary ElixirTime HR-study indications from a paired PineTime.
+"""Record or recover temporary ElixirTime HR-study indications from a paired PineTime.
 
 The program has no network listener, does not scan or pair, and does not alter
-watch settings. It uses an existing BlueZ device object, asks the temporary
-study service to start one bounded session, and reconnects after normal range
-loss. The watch buffers records while disconnected and flushes them as BLE
-indications after a new subscription is established.
+persisted watch settings. It uses an existing BlueZ device object to either
+start one bounded session or flush a retained completed session, and reconnects
+after normal range loss. The watch buffers records while disconnected and
+flushes them as BLE indications after a new subscription is established.
 """
 
 from __future__ import annotations
@@ -298,16 +298,21 @@ async def record(
     output: Path,
     label: str,
     algorithm: str,
+    recover_only: bool = False,
 ) -> int:
   output.parent.mkdir(parents=True, exist_ok=True)
   writer = JsonlWriter(output)
   started = monotonic()
-  collection_deadline = started + duration_seconds
+  # A recovery must never issue START: the watch may be retaining the FIFO
+  # from a completed, out-of-range capture. Treat its collection target as
+  # already elapsed so the first successful connection subscribes, FLUSHes,
+  # durably ACKs every retained pair, and then sends STOP.
+  collection_deadline = started if recover_only else started + duration_seconds
   recovery_deadline = collection_deadline + return_grace_seconds
   connection_attempts = 0
   connection_losses = 0
   ever_connected = False
-  study_started = False
+  study_started = recover_only
   received_records = 0
   accepted_records = 0
   recovered_records = 0
@@ -339,11 +344,12 @@ async def record(
           "address": address,
           "adapter": adapter,
           "duration_seconds": duration_seconds,
-          "watch_capture_lease_seconds": duration_seconds,
+          "watch_capture_lease_seconds": None if recover_only else duration_seconds,
           "watch_capture_lease_max_seconds": MAX_STUDY_CAPTURE_SECONDS,
           "return_grace_seconds": return_grace_seconds,
           "label": label,
           "algorithm": algorithm,
+          "recovery_only": recover_only,
           "watch_tick_hz": 1024,
           "study_protocol_version": 4,
           "study_service": STUDY_SERVICE,
@@ -602,19 +608,41 @@ def parse_args() -> argparse.Namespace:
   record_parser.add_argument("--out", type=Path, required=True, help="new JSONL output path")
   record_parser.add_argument("--label", required=True, help="human-readable session label")
   record_parser.add_argument("--algorithm", required=True, choices=("baseline", "ppgv2"), help="firmware estimator under test")
+  recover_parser = subcommands.add_parser("recover", help="durably flush a retained completed study without starting a new one")
+  recover_parser.add_argument("--address", required=True, help="existing BlueZ-paired device address")
+  recover_parser.add_argument("--adapter", default="hci0", help="BlueZ adapter that owns the paired device")
+  recover_parser.add_argument(
+      "--return-grace",
+      type=int,
+      default=DEFAULT_RETURN_GRACE_SECONDS,
+      help="seconds to keep reconnecting for the retained FIFO (default: 900)",
+  )
+  recover_parser.add_argument("--out", type=Path, required=True, help="new JSONL output path")
+  recover_parser.add_argument("--label", required=True, help="human-readable recovery label")
+  recover_parser.add_argument("--algorithm", required=True, choices=("baseline", "ppgv2"), help="firmware estimator retained by the watch")
   return parser.parse_args()
 
 
 def main() -> int:
   args = parse_args()
-  if not 0 < args.duration <= MAX_STUDY_CAPTURE_SECONDS:
+  if args.command == "record" and not 0 < args.duration <= MAX_STUDY_CAPTURE_SECONDS:
     print(f"--duration must be between 1 and {MAX_STUDY_CAPTURE_SECONDS} seconds", file=sys.stderr)
     return 2
   if args.return_grace < 0:
     print("--return-grace must be zero or positive", file=sys.stderr)
     return 2
+  duration_seconds = args.duration if args.command == "record" else 0
   return asyncio.run(
-      record(args.address, args.adapter, args.duration, args.return_grace, args.out, args.label, args.algorithm)
+      record(
+          args.address,
+          args.adapter,
+          duration_seconds,
+          args.return_grace,
+          args.out,
+          args.label,
+          args.algorithm,
+          recover_only=args.command == "recover",
+      )
   )
 
 
