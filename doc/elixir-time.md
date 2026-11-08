@@ -6,10 +6,19 @@ tag, with `upstream` kept as the official repository remote.
 
 The device continues to use the established InfiniTime BLE device identity for
 phone compatibility. Its standard Device Information **software revision** is
-`ElixirTime`, while its firmware revision is `1.16.9`; the Terminal watch face
+`ElixirTime`, while this corrected baseline's firmware revision is `1.16.12`; the Terminal watch face
 identifies the customised firmware as `elixir@time`. These independent,
 visible identifiers make a successful custom flash distinguishable from an
 upstream `1.16.1` image.
+
+The `research/baseline-validation` branch starts from baseline `cd4ef8d6`
+(`1.16.9`). It retains that estimator and its study protocol 3, with focused
+corrections for the negative failure sentinel, spectral-reset handling,
+message-independent sampling deadlines, task/interrupt queue dispatch, and
+reading age/expiry. It does not include PPGv2 or the later upstream maintenance
+changes. Keep its captures labelled `baseline-fixed-1.16.12` rather than pooling
+them with the original baseline. Use the recorder from this same checkout;
+the protocol 4 recorder on `research/ppgv2` is incompatible.
 
 ## Product choices
 
@@ -40,8 +49,8 @@ layout is compatibility data, and unused values are harmless.
 
 ## Heart-rate behaviour
 
-The HRS3300 supplies a best-effort PPG estimate. A zero from its algorithm is
-now treated as an invalid estimate, not as a physiological zero. The most
+The HRS3300 supplies a best-effort PPG estimate. Only a positive algorithm
+result is accepted; zero and the negative failure sentinel are invalid. The most
 recent verified reading is retained and classified as:
 
 - **fresh** for 30 seconds;

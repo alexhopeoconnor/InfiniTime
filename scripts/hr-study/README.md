@@ -1,5 +1,10 @@
 # Temporary heart-rate study recorder
 
+This checkout's recorder matches the baseline's single-frame **protocol 3**.
+It must not be used with the PPGv2 protocol 4 diagnostic firmware. The corrected
+baseline build is `1.16.12`; label new captures `baseline-fixed-1.16.12-*` so
+they remain distinguishable from the original `1.16.9` captures.
+
 This directory is a local comparison instrument, not a companion service. A
 dedicated firmware build (`-DELIXIR_HR_STUDY=ON`) exposes a private,
 unadvertised GATT service only to the already-paired desktop while a bounded
@@ -104,3 +109,35 @@ reconnect is evidence of recovery, but cannot prove it was created while
 disconnected; that distinction is not encoded into the compact watch record.
 Treat a `collection_complete: false` session as transport diagnostics, not a
 baseline profile.
+
+## Manual pulse comparison
+
+After flashing and checking the watch, select a 30-second HR interval. Wear
+it normally, off its dock, sit quietly for five minutes, and remain near the
+PC with phone Bluetooth off. Start a 15-minute session from this checkout:
+
+```sh
+./scripts/hr-study/record.sh --label baseline-fixed-1.16.12-rest-001 --algorithm baseline --duration 900
+```
+
+Count for a full 60 seconds on a timed cue, for example during session minutes
+1–2, 4–5, 7–8, 10–11, and 13–14, measured from the `study_started` event
+(connection setup precedes it). Record each count's actual UTC start/end and
+any movement or counting uncertainty. Avoid typing or touching the watch
+during a count. Do not start the session until the wearer is ready.
+
+Compare accepted completed windows individually with the manual count and
+report availability separately. Failed windows are missing estimates, never
+zero BPM; displayed stale values are not new measurements. The baseline uses
+a nominal 6.4-second optical window and may average earlier spectra, whereas
+the manual reference spans a minute, so start with steady seated measurements.
+Prefer outcomes ending in the latter 30 seconds of a count, with a margin
+for timing uncertainty, to keep the bounded acquisition attempt within the
+reference interval.
+
+Protocol 3 records watch uptime ticks at 1024 Hz, not wall-clock time. Clock
+sync does not change those ticks. During an uninterrupted, promptly ACKed
+connection, use live arrival timestamps to estimate the tick-to-UTC offset
+and report its uncertainty. Exclude buffered/reconnected records from manual
+time matching; their arrival times are not measurement times. Keep the raw
+JSONL, manual counts, and timing assumptions together for later review.

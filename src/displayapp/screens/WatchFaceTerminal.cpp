@@ -185,7 +185,9 @@ void WatchFaceTerminal::Refresh() {
                                        ((now / pdMS_TO_TICKS(300)) % 2 == 0);
       const auto displayPreviousHeartRate = [&] {
         const auto age = heartRateAgeSeconds.Get();
-        if (heartbeat.Get() == 0) {
+        // Acquisition and failure states must obey the same expiry as an
+        // idle display; retaining a value is not evidence that it is current.
+        if (heartRateStatus == HeartRateReadingStatus::Unavailable || heartbeat.Get() == 0) {
           lv_label_set_text_static(heartbeatValue, "?");
         } else if (age < 60) {
           // An explicit age is clearer than a clock-like 00:34 and avoids

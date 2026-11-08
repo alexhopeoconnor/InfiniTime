@@ -60,7 +60,7 @@ namespace Pinetime {
         if (!hasValidHeartRate) {
           return 0;
         }
-        return (static_cast<uint64_t>(now - lastValidHeartRateTick) * 1000ULL) / configTICK_RATE_HZ;
+        return (now - lastValidHeartRateTick) / configTICK_RATE_HZ;
       }
 
       ReadingStatus GetReadingStatus(TickType_t now) const {

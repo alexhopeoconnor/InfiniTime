@@ -10,12 +10,14 @@
 #include <cstdlib>
 #include <limits>
 
-#include "utility/Math.h"
-
 using namespace Pinetime::Applications;
 
 namespace {
   constexpr TickType_t backgroundMeasurementTimeLimit = 30 * configTICK_RATE_HZ;
+
+  inline bool in_isr() {
+    return (SCB->ICSR & SCB_ICSR_VECTACTIVE_Msk) != 0;
+  }
 }
 
 std::optional<TickType_t> HeartRateTask::BackgroundMeasurementInterval() const {
@@ -55,37 +57,6 @@ TickType_t HeartRateTask::CurrentTaskDelay() {
 #endif
     return delay;
   };
-  auto CalculateSleepTicks = [&]() {
-    TickType_t elapsed = currentTime - measurementStartTime;
-
-    // Target system tick is the elapsed sensor ticks multiplied by the sensor tick duration (i.e. the elapsed time)
-    // multiplied by the system tick rate
-    // Since the sensor tick duration is a whole number of milliseconds, we compute in milliseconds and then divide by 1000
-    // To avoid the number of milliseconds overflowing a u32, we take a factor of 2 out of the divisor and dividend
-    // (1024 / 2) * 65536 * 100 = 3355443200 which is less than 2^32
-
-    // Guard against future tick rate changes
-    static_assert((configTICK_RATE_HZ / 2ULL) * (std::numeric_limits<decltype(count)>::max() + 1ULL) *
-                      static_cast<uint64_t>((Pinetime::Controllers::Ppg::deltaTms)) <
-                    std::numeric_limits<uint32_t>::max(),
-                  "Overflow");
-    TickType_t elapsedTarget = Utility::RoundedDiv(static_cast<uint32_t>(configTICK_RATE_HZ / 2) * (static_cast<uint32_t>(count) + 1U) *
-                                                     static_cast<uint32_t>((Pinetime::Controllers::Ppg::deltaTms)),
-                                                   static_cast<uint32_t>(1000 / 2));
-
-    // On count overflow, reset both count and start time
-    // Count is 16bit to avoid overflow in elapsedTarget
-    // Count overflows every 100ms * u16 max = ~2 hours, much more often than the tick count (~48 days)
-    // So no need to check for tick count overflow
-    if (count == std::numeric_limits<decltype(count)>::max()) {
-      count = 0;
-      measurementStartTime = currentTime;
-    }
-    if (elapsedTarget > elapsed) {
-      return elapsedTarget - elapsed;
-    }
-    return static_cast<TickType_t>(0);
-  };
   switch (state) {
     case States::Disabled:
       return ClampToStudyCaptureDeadline(portMAX_DELAY);
@@ -107,7 +78,7 @@ TickType_t HeartRateTask::CurrentTaskDelay() {
       return ClampToStudyCaptureDeadline(0);
     case States::BackgroundMeasuring:
     case States::ForegroundMeasuring:
-      return ClampToStudyCaptureDeadline(CalculateSleepTicks());
+      return ClampToStudyCaptureDeadline(samplingCadence.Delay(currentTime));
   }
   // Needed to keep dumb compiler happy, this is unreachable
   // Any new additions to States will cause the above switch statement not to compile, so this is safe
@@ -312,16 +283,25 @@ void HeartRateTask::Work() {
     UpdateMeasurementMode();
 
     if (state == States::ForegroundMeasuring || state == States::BackgroundMeasuring) {
-      HandleSensorData();
-      count++;
+      const auto now = xTaskGetTickCount();
+      if (samplingCadence.Delay(now) == 0) {
+        samplingCadence.Sampled(now);
+        HandleSensorData();
+      }
     }
   }
 }
 
 void HeartRateTask::PushMessage(HeartRateTask::Messages msg) {
-  BaseType_t xHigherPriorityTaskWoken = pdFALSE;
-  xQueueSendFromISR(messageQueue, &msg, &xHigherPriorityTaskWoken);
-  portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+  if (in_isr()) {
+    BaseType_t xHigherPriorityTaskWoken = pdFALSE;
+    xQueueSendFromISR(messageQueue, &msg, &xHigherPriorityTaskWoken);
+    portYIELD_FROM_ISR(xHigherPriorityTaskWoken);
+  } else {
+    // BLE controls run in task context. Keep this non-blocking so a full HR
+    // queue cannot stall the caller, while using the appropriate RTOS API.
+    xQueueSend(messageQueue, &msg, 0);
+  }
 }
 
 void HeartRateTask::StartMeasurement() {
@@ -330,8 +310,8 @@ void HeartRateTask::StartMeasurement() {
   ppg.Reset(true);
   vTaskDelay(100);
   measurementSucceeded = false;
-  count = 0;
   measurementStartTime = xTaskGetTickCount();
+  samplingCadence.Start(measurementStartTime);
 #ifdef ELIXIR_HR_STUDY
   ResetStudyMeasurementStats();
 #endif
@@ -421,7 +401,7 @@ void HeartRateTask::HandleSensorData() {
     }
   }
 
-  if (bpm != 0) {
+  if (bpm > 0) {
     // Maintain constant frequency acquisition in background mode
     // If the last measurement time is set to the start time, then the next measurement
     // will start exactly one background period after this one

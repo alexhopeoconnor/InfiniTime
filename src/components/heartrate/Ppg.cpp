@@ -161,9 +161,11 @@ int Ppg::HeartRate() {
     return 0;
   }
   enoughData = true;
-  int hr = 0;
-  hr = ProcessHeartRate(resetSpectralAvg);
+  // Consume the pending reset before processing: an invalid spectrum can
+  // request another reset for the next analysis.
+  const bool reset = resetSpectralAvg;
   resetSpectralAvg = false;
+  const int hr = ProcessHeartRate(reset);
   // Make room for overlapWindow number of new samples
   for (int idx = 0; idx < dataLength - overlapWindow; idx++) {
     dataHRS[idx] = dataHRS[idx + overlapWindow];
@@ -208,7 +210,6 @@ int Ppg::ProcessHeartRate(bool init) {
   ArduinoFFT<float> FFT = ArduinoFFT<float>(vReal.data(), vImag.data(), dataLength, sampleFreq);
   FFT.compute(FFTDirection::Forward);
   FFT.complexToMagnitude();
-  FFT.~ArduinoFFT();
   SpectrumAverage(vReal.data(), spectrum.data(), spectrum.size(), init);
   peakLocation = 0.0f;
   float threshold = peakDetectionThreshold;

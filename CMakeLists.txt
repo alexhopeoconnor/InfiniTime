@@ -3,7 +3,9 @@ cmake_minimum_required(VERSION 3.10)
 set(CMAKE_BUILD_TYPE Release CACHE STRING "Choose Debug or Release")
 set(CMAKE_TRY_COMPILE_TARGET_TYPE STATIC_LIBRARY)
 
-project(pinetime VERSION 1.16.9 LANGUAGES C CXX ASM)
+# Corrected baseline comparison build; distinct from the original 1.16.9
+# baseline and the experimental PPGv2 firmware (1.16.10/1.16.11).
+project(pinetime VERSION 1.16.12 LANGUAGES C CXX ASM)
 
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_CXX_STANDARD 20)

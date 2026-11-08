@@ -5,6 +5,7 @@
 #include <task.h>
 #include <queue.h>
 #include <components/heartrate/Ppg.h>
+#include "heartratetask/SamplingCadence.h"
 #ifdef ELIXIR_HR_STUDY
   #include <components/heartrate/HrStudyRecord.h>
 #endif
@@ -80,7 +81,7 @@ namespace Pinetime {
       bool measurementSucceeded;
       bool manualMeasurementRequested = false;
       States state = States::Disabled;
-      uint16_t count;
+      SamplingCadence<configTICK_RATE_HZ, Controllers::Ppg::deltaTms> samplingCadence;
       Drivers::Hrs3300& heartRateSensor;
       Controllers::HeartRateController& controller;
       Controllers::Settings& settings;
