@@ -84,3 +84,9 @@ _netrc
 **/.claude/*
 !**/.claude/skills/
 !**/.claude/commands/
+
+# Retired personal Cursor state and integration files.
+.cursor/
+.cursorrules
+.cursorignore
+.cursorindexingignore
