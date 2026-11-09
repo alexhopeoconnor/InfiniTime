@@ -55,3 +55,32 @@ src/arm-none-eabi
 node_modules
 package.json
 package-lock.json
+
+# Local environment overrides; review examples before committing them.
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Local cloud and command-line credentials.
+**/.aws/
+**/.azure/
+**/.ssh/
+**/.kube/
+**/.config/gcloud/
+**/.config/gh/hosts.yml
+**/.docker/config.json
+**/.docker/contexts/
+.git-credentials
+.netrc
+_netrc
+.pypirc
+
+# Agent runtime state; shared skills remain versionable.
+**/.agents/*
+!**/.agents/skills/
+**/.codex/*
+!**/.codex/skills/
+**/.claude/*
+!**/.claude/skills/
+!**/.claude/commands/
