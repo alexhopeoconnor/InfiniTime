@@ -135,9 +135,9 @@ FIFO is retained for recovery; blue `tx` / `ack` means an indication or host
 acknowledgement is pending, and green `ok` means no record awaits host
 acknowledgement. The code and its Docker-only recorder are documented in
 [`scripts/hr-study/README.md`](../scripts/hr-study/README.md). The launcher is
-the sole approved automated time sync: it starts the restricted DFU-only ITD
+the sole approved automated time sync: it starts the temporary DFU-only ITD
 daemon, runs one explicit `itctl set time now`, stops that daemon, and only
-then starts the recorder. It can be made non-mutating with `--no-sync-time`.
+then starts the recorder. Use `--no-sync-time` to skip that clock write.
 
 ## First upgrade and recovery checklist
 
@@ -225,29 +225,51 @@ enabled = false
 enabled = false
 ```
 
-The sibling checkout at `../itd` (relative to the InfiniTime repository root)
-contains a small reviewed branch, `elixir-dfu-only` at `922aa5a` (on top of
-upstream `b79806e`). Its `ELIXIR_DFU_ONLY=1` mode deliberately starts only the
-Bluetooth connection and local control socket. It does **not** relay desktop
-notifications, initialise music/calls/weather/metrics/PureMaps/FUSE, set the
-watch clock, or reconnect after a disconnect. Always use that mode for an
-ElixirTime desktop session.
+The reviewed helper recipe and patch are tracked in
+[`scripts/itd/`](../scripts/itd/README.md). They pin upstream ITD and preserve
+the existing DFU-only customization without requiring a sibling checkout.
+Its `ELIXIR_DFU_ONLY=1` mode starts the Bluetooth connection and local control
+socket. It does **not** relay desktop notifications, initialise
+music/calls/weather/metrics/PureMaps/FUSE, set the watch clock automatically,
+or reconnect after a disconnect. Always use that mode for an ElixirTime
+desktop session. The normal local control API remains available, including
+mutating commands; this mode limits background behavior rather than API
+capabilities.
 
-The temporary configuration is tracked as
-[`itd-dfu-only.toml`](itd-dfu-only.toml). The compiled binaries and their
-configuration belong in `/tmp`, not in a global package location or a user
-service. If `/tmp/elixir-itd` has been cleared, rebuild from the reviewed
-checkout (the Go module and build caches may also remain in `/tmp`):
+Build once from the repository root:
 
 ```sh
-itd_root="$(cd ../itd && pwd)"
-cd "$itd_root"
-git switch elixir-dfu-only
-mkdir -p /tmp/elixir-itd
-GOMODCACHE=/tmp/elixir-itd-go-modcache GOCACHE=/tmp/elixir-itd-go-buildcache go generate .
-GOMODCACHE=/tmp/elixir-itd-go-modcache GOCACHE=/tmp/elixir-itd-go-buildcache go build -trimpath -buildvcs=true -o /tmp/elixir-itd/itd .
-GOMODCACHE=/tmp/elixir-itd-go-modcache GOCACHE=/tmp/elixir-itd-go-buildcache go build -trimpath -buildvcs=true -o /tmp/elixir-itd/itctl ./cmd/itctl
+./scripts/itd/build.sh
 ```
+
+The build may download the pinned source, Go toolchain, and module
+dependencies. It writes source, binaries, checksums, and build provenance to
+ignored `.cache/itd/`, with `.cache/itd/current` pointing to the last completed
+build. Go caches also live there by default. `ELIXIR_ITD_CACHE_DIR` selects an
+alternative private cache location. The recipe never installs a service or
+connects to the watch. See the helper README for building from an existing
+ordinary source repository and reusing Go caches.
+
+The temporary configuration is tracked as
+[`itd-dfu-only.toml`](itd-dfu-only.toml). Before a diagnostic or OTA session,
+restore the verified helper and configuration into their temporary runtime
+directories:
+
+```sh
+./scripts/hr-study/prepare-helper.sh
+```
+
+Preparation checks the cached binaries and copies them into `/tmp/elixir-itd`
+with configuration under `/tmp/elixir-itd-config`. Clearing `/tmp` therefore
+requires preparation again, not a rebuild. The durable cache survives until
+explicitly removed. Keep it ignored and keep session data private.
+
+For a study, use `scripts/hr-study/record-prepared.sh`. That wrapper restores
+the helper and holds a sleep inhibitor for the bounded recorder process.
+Supply the paired watch address through `--address` or `ELIXIR_HR_ADDRESS`;
+never put a real device address in tracked documentation or scripts. Follow
+the [study instructions](../scripts/hr-study/README.md) for protocol matching
+and capture limits.
 
 The permitted inspection commands are:
 
@@ -275,7 +297,6 @@ The current known-good workflow is:
 # Keep the watch seated securely on its charging dock for the entire transfer.
 # Phone Bluetooth off; the PineTime is paired with this PC.
 
-itd_root="$(cd ../itd && pwd)"
 itd_run=/tmp/elixir-itd
 itd_cfg=/tmp/elixir-itd-config
 # Use the same build directory passed as BUILD_DIR to the container build.
@@ -283,8 +304,7 @@ version="$(sed -nE 's/^project\(pinetime VERSION ([0-9]+\.[0-9]+\.[0-9]+).*/\1/p
 build_dir="$PWD/build/ui-${version}"
 archive="$build_dir/src/pinetime-mcuboot-app-dfu-${version}.zip"
 
-mkdir -p "$itd_run" "$itd_cfg/itd"
-cp doc/itd-dfu-only.toml "$itd_cfg/itd/itd.toml"
+./scripts/hr-study/prepare-helper.sh
 
 # In one terminal, foreground only; never enable a systemd service.
 ELIXIR_DFU_ONLY=1 XDG_CONFIG_HOME="$itd_cfg" "$itd_run/itd"

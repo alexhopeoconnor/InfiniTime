@@ -55,8 +55,41 @@ capabilities.
 
 The launcher performs one explicit `itctl set time now` through the reviewed
 DFU-only ITD daemon, proves the connection with `firmware version`, and stops
-that daemon before Docker connects. Use `--no-sync-time` only for a deliberately
-non-mutating run. The launcher never starts a persistent service.
+that daemon before Docker connects. Use `--no-sync-time` to skip the clock
+write; the recorder still sends study control commands. The launcher never
+starts a persistent service. DFU-only mode disables ITD's background companion
+behavior but leaves its normal local control API available.
+
+## Prepare the helper
+
+Build the pinned helper once from the repository root:
+
+```sh
+./scripts/itd/build.sh
+```
+
+The [helper recipe](../itd/README.md) builds `itd` and `itctl` into ignored
+`.cache/itd/`, with checksums and provenance. It can reuse an existing ordinary
+source repository and Go caches; it does not need the sibling ITD checkout.
+The build may download source, the pinned Go toolchain, and dependencies, but
+does not connect to the watch.
+
+Use `record-prepared.sh` for normal recording. It refuses an overlapping
+recorder session, restores verified helper binaries and the tracked
+configuration into `/tmp`, and prevents the PC from sleeping until the
+bounded session exits. It does not rebuild missing binaries automatically.
+Its `--help` path does not prepare files or access Bluetooth. To restore only
+the helper after `/tmp` has been cleared, run:
+
+```sh
+./scripts/hr-study/prepare-helper.sh
+```
+
+Provide the already-paired watch's Bluetooth address using `--address` or the
+`ELIXIR_HR_ADDRESS` environment variable. Set that value privately in your
+shell; do not save real device addresses in tracked files. There is no
+personal device address built into the launcher. The examples below assume
+`ELIXIR_HR_ADDRESS` has been set.
 
 ## Record and compare
 
@@ -64,7 +97,7 @@ With the phone Bluetooth off, the watch paired to this PC, and the study
 firmware installed:
 
 ```sh
-./scripts/hr-study/record.sh --label baseline-004 --algorithm baseline --duration 720
+./scripts/hr-study/record-prepared.sh --address "$ELIXIR_HR_ADDRESS" --label baseline-004 --algorithm baseline --duration 720
 ```
 
 `--duration` is the on-watch capture lease, not an appointment the wearer must
@@ -89,6 +122,8 @@ device object. Initial connection subscribes then sends the duration-bearing
 `START`; a reconnect subscribes, then explicitly sends `FLUSH`.
 
 Each output is new, mode-0600 JSONL under ignored `scripts/hr-study/data/`.
+Keep manual counts and timing notes private alongside the recording. Do not
+commit recordings, local readiness reports, cache manifests, or helper logs.
 Analyse without host Python or a BLE connection:
 
 ```sh
@@ -117,7 +152,7 @@ it normally, off its dock, sit quietly for five minutes, and remain near the
 PC with phone Bluetooth off. Start a 15-minute session from this checkout:
 
 ```sh
-./scripts/hr-study/record.sh --label baseline-fixed-1.16.12-rest-001 --algorithm baseline --duration 900
+./scripts/hr-study/record-prepared.sh --address "$ELIXIR_HR_ADDRESS" --label baseline-fixed-1.16.12-rest-001 --algorithm baseline --duration 900
 ```
 
 Count for a full 60 seconds on a timed cue, for example during session minutes

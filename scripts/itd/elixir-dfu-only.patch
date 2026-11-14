@@ -1,0 +1,248 @@
+diff --git a/infinitime/dfu.go b/infinitime/dfu.go
+index a32153b..668dad9 100644
+--- a/infinitime/dfu.go
++++ b/infinitime/dfu.go
+@@ -7,6 +7,7 @@ import (
+ 	"fmt"
+ 	"io"
+ 	"io/fs"
++	"time"
+ 
+ 	"tinygo.org/x/bluetooth"
+ )
+@@ -220,8 +221,14 @@ func awaitDFUResponse(ctrlPoint *bluetooth.DeviceCharacteristic, expect []byte)
+ 		return nil, err
+ 	}
+ 
+-	data := <-respCh
+-	ctrlPoint.EnableNotifications(nil)
++	defer ctrlPoint.EnableNotifications(nil)
++
++	var data []byte
++	select {
++	case data = <-respCh:
++	case <-time.After(30 * time.Second):
++		return nil, fmt.Errorf("timed out waiting for dfu response %x", expect)
++	}
+ 
+ 	if !bytes.HasPrefix(data, expect) {
+ 		return nil, fmt.Errorf("unexpected dfu response %x (expected %x)", data, expect)
+diff --git a/infinitime/infinitime.go b/infinitime/infinitime.go
+index 1c41688..e582b63 100644
+--- a/infinitime/infinitime.go
++++ b/infinitime/infinitime.go
+@@ -13,6 +13,9 @@ type Options struct {
+ 	Allowlist    []string
+ 	Blocklist    []string
+ 	ScanInterval time.Duration
++	// DisableReconnect prevents the daemon from retaining a connection after a
++	// caller has deliberately used it for a one-off operation such as DFU.
++	DisableReconnect bool
+ 
+ 	OnDisconnect func(dev *Device)
+ 	OnReconnect  func(dev *Device)
+@@ -92,7 +95,9 @@ func Connect(opts Options) (device *Device, err error) {
+ 			if opts.OnDisconnect != nil {
+ 				opts.OnDisconnect(device)
+ 			}
+-			go reconnect(opts, adapter, device, mac)
++			if !opts.DisableReconnect {
++				go reconnect(opts, adapter, device, mac)
++			}
+ 		}
+ 	})
+ 
+diff --git a/main.go b/main.go
+index b72a13e..53e387b 100644
+--- a/main.go
++++ b/main.go
+@@ -56,13 +56,20 @@ func main() {
+ 		fmt.Println(version)
+ 		return
+ 	}
+-	
++
++	// ELIXIR_DFU_ONLY makes itd a short-lived, transport-only daemon for a
++	// firmware update.  In this mode it exposes only the local control socket:
++	// it does not relay desktop notifications, control media, contact network
++	// services, mount the watch filesystem, change the watch clock, or reconnect
++	// after a disconnect.
++	dfuOnly := os.Getenv("ELIXIR_DFU_ONLY") == "1"
++
+ 	err := config.Load(&cfg)
+-	
++
+ 	log = slog.New(loggers.NewPretty(os.Stderr, loggers.Options{
+ 		Level: config.ParseLogLevel(cfg.Logging.Level),
+ 	}))
+-	
++
+ 	// Defer handling the error until we have the logger set up
+ 	if err != nil {
+ 		log.Error("Error loading config", slog.Any("error", err))
+@@ -71,29 +78,34 @@ func main() {
+ 
+ 	// Create infinitime options struct
+ 	opts := infinitime.Options{
+-		OnReconnect: func(dev *infinitime.Device) {
+-			if cfg.On.Reconnect.SetTime {
+-				// Set time to current time
+-				err = dev.SetTime(time.Now())
+-				if err != nil {
+-					return
++		DisableReconnect: dfuOnly,
++	}
++	if !dfuOnly {
++		opts = infinitime.Options{
++			OnReconnect: func(dev *infinitime.Device) {
++				if cfg.On.Reconnect.SetTime {
++					// Set time to current time
++					err = dev.SetTime(time.Now())
++					if err != nil {
++						return
++					}
+ 				}
+-			}
+ 
+-			// If config specifies to notify on reconnect
+-			if cfg.On.Reconnect.Notify {
+-				// Send notification to InfiniTime
+-				err = dev.Notify("itd", "Successfully reconnected")
+-				if err != nil {
+-					return
++				// If config specifies to notify on reconnect
++				if cfg.On.Reconnect.Notify {
++					// Send notification to InfiniTime
++					err = dev.Notify("itd", "Successfully reconnected")
++					if err != nil {
++						return
++					}
+ 				}
+-			}
+ 
+-			// FS must be updated on reconnect
+-			updateFS = true
+-			// Resend weather on reconnect
+-			sendWeatherCh <- struct{}{}
+-		},
++				// FS must be updated on reconnect
++				updateFS = true
++				// Resend weather on reconnect
++				sendWeatherCh <- struct{}{}
++			},
++		}
+ 	}
+ 
+ 	ctx := context.Background()
+@@ -116,7 +128,7 @@ func main() {
+ 	log.Info("Connected to InfiniTime", slog.String("version", ver), slog.String("addr", dev.Address()))
+ 
+ 	// If config specifies to notify on connect
+-	if cfg.On.Connect.Notify {
++	if !dfuOnly && cfg.On.Connect.Notify {
+ 		// Send notification to InfiniTime
+ 		err = dev.Notify("itd", "Successfully connected")
+ 		if err != nil {
+@@ -124,7 +136,7 @@ func main() {
+ 		}
+ 	}
+ 
+-	if cfg.On.Connect.SetTime {
++	if !dfuOnly && cfg.On.Connect.SetTime {
+ 		// Set time to current time
+ 		err = dev.SetTime(time.Now())
+ 		if err != nil {
+@@ -146,47 +158,51 @@ func main() {
+ 
+ 	wg := WaitGroup{&sync.WaitGroup{}}
+ 
+-	// Initialize music controls
+-	err = initMusicCtrl(ctx, wg, dev)
+-	if err != nil {
+-		log.Warn("Error initializing music control", slog.Any("error", err))
+-	}
+-
+-	// Start control socket
+-	err = initCallNotifs(ctx, wg, dev)
+-	if err != nil {
+-		log.Warn("Error initializing call notifications", slog.Any("error", err))
+-	}
++	if dfuOnly {
++		log.Info("Running in DFU-only mode")
++	} else {
++		// Initialize music controls
++		err = initMusicCtrl(ctx, wg, dev)
++		if err != nil {
++			log.Warn("Error initializing music control", slog.Any("error", err))
++		}
+ 
+-	// Initialize notification relay
+-	err = initNotifRelay(ctx, wg, dev)
+-	if err != nil {
+-		log.Warn("Error initializing notification relay", slog.Any("error", err))
+-	}
++		// Start control socket
++		err = initCallNotifs(ctx, wg, dev)
++		if err != nil {
++			log.Warn("Error initializing call notifications", slog.Any("error", err))
++		}
+ 
+-	// Initializa weather
+-	err = initWeather(ctx, wg, dev)
+-	if err != nil {
+-		log.Warn("Error initializing weather", slog.Any("error", err))
+-	}
++		// Initialize notification relay
++		err = initNotifRelay(ctx, wg, dev)
++		if err != nil {
++			log.Warn("Error initializing notification relay", slog.Any("error", err))
++		}
+ 
+-	// Initialize metrics collection
+-	err = initMetrics(ctx, wg, dev)
+-	if err != nil {
+-		log.Warn("Error initializing metrics collection", slog.Any("error", err))
+-	}
++		// Initialize weather
++		err = initWeather(ctx, wg, dev)
++		if err != nil {
++			log.Warn("Error initializing weather", slog.Any("error", err))
++		}
+ 
+-	// Initialize puremaps integration
+-	err = initPureMaps(ctx, wg, dev)
+-	if err != nil {
+-		log.Warn("Error initializing puremaps integration", slog.Any("error", err))
+-	}
++		// Initialize metrics collection
++		err = initMetrics(ctx, wg, dev)
++		if err != nil {
++			log.Warn("Error initializing metrics collection", slog.Any("error", err))
++		}
+ 
+-	// Start fuse socket
+-	if cfg.Fuse.Enabled {
+-		err = startFUSE(ctx, wg, dev)
++		// Initialize puremaps integration
++		err = initPureMaps(ctx, wg, dev)
+ 		if err != nil {
+-			log.Warn("Error starting fuse socket", slog.Any("error", err))
++			log.Warn("Error initializing puremaps integration", slog.Any("error", err))
++		}
++
++		// Start fuse socket
++		if cfg.Fuse.Enabled {
++			err = startFUSE(ctx, wg, dev)
++			if err != nil {
++				log.Warn("Error starting fuse socket", slog.Any("error", err))
++			}
+ 		}
+ 	}
+ 
+@@ -236,4 +252,4 @@ func onReqPasskey() (uint32, error) {
+ 		return uint32(passkeyInt), err
+ 	}
+ 	return out, nil
+-}
+\ No newline at end of file
++}

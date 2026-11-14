@@ -79,12 +79,27 @@ enabled = false
 enabled = false
 ```
 
-The vetted local ITD checkout is the sibling `../itd` repository, on branch
-`elixir-dfu-only` (commit `922aa5a`, based on upstream `b79806e`). Its
-`ELIXIR_DFU_ONLY=1` mode exposes only the temporary local control socket. It
-does not initialise notification relay, music, calls, weather, metrics,
-PureMaps, FUSE, clock setting, or reconnect behaviour. Use that mode for all
-desktop sessions; do not replace it with upstream ITD defaults.
+The reviewed ITD build recipe lives in `scripts/itd/`: `source.lock` pins the
+upstream revision and toolchain, and `elixir-dfu-only.patch` preserves the
+local customization. Follow `scripts/itd/README.md` to build into the ignored
+`.cache/itd/` directory. No sibling checkout is required. Run
+`scripts/hr-study/prepare-helper.sh` to verify and restore those binaries and
+the tracked configuration into `/tmp` after temporary files have been cleared.
+Neither building nor preparation connects to the watch.
+
+Always start the helper with `ELIXIR_DFU_ONLY=1`. This mode does not initialise
+notification relay, music, calls, weather, metrics, PureMaps, FUSE, automatic
+clock setting, or reconnect behaviour. It still exposes ITD's normal local
+control API; it is not a restriction on which commands that API can execute.
+Use only the permitted operations below, and do not substitute upstream ITD
+defaults.
+
+Use `scripts/hr-study/record-prepared.sh` for a study. It checks for an existing
+recorder, restores the helper, and prevents sleep for the bounded session.
+Supply the watch address with `--address` or `ELIXIR_HR_ADDRESS`; keep actual
+device addresses and private study data out of tracked files. Generated
+binaries, source, checksums, and provenance stay in `.cache/itd/`; recordings
+stay in ignored `scripts/hr-study/data/`.
 
 After that configuration is reviewed and the user has authorised the BLE
 session, these are the permitted diagnostic operations:

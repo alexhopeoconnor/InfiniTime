@@ -5,7 +5,7 @@ set -euo pipefail
 readonly script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly repository_root="$(cd -- "$script_dir/../.." && pwd)"
 readonly image="elixir-hr-study:local"
-readonly default_address="CF:95:FC:A9:F2:B7"
+readonly default_address="${ELIXIR_HR_ADDRESS:-}"
 readonly default_duration=720
 readonly default_return_grace=900
 readonly max_capture_duration=2700
@@ -32,8 +32,11 @@ Usage: record.sh --label NAME [--algorithm baseline|ppgv2] [--address BLE_ADDRES
 
 Records one bounded temporary HR-study session from an already-paired PineTime.
 It neither scans nor pairs and it never opens a network listener. By default it
-performs one explicit clock sync through the restricted temporary itd daemon,
+performs one explicit clock sync through the DFU-only temporary itd daemon,
 stops that daemon, then starts the Docker-only BLE logger.
+
+Supply the paired watch address with --address or ELIXIR_HR_ADDRESS. Keep the
+actual device address in your local environment, outside version control.
 
 The requested duration is an on-watch capture lease, capped at 2700 seconds
 (45 minutes) to protect the 128-record RAM FIFO. If the watch is out of range
@@ -98,7 +101,7 @@ stop_time_sync_daemon() {
 
 synchronize_watch_time() {
   [[ -x "$itd_bin" && -x "$itctl_bin" ]] || {
-    echo "Missing vetted itd/itctl binaries in $itd_run_dir. Rebuild them from the sibling ../itd checkout as documented in doc/elixir-time.md." >&2
+    echo "Missing vetted itd/itctl binaries in $itd_run_dir. Run scripts/hr-study/prepare-helper.sh; if the cache is missing, run scripts/itd/build.sh first." >&2
     exit 1
   }
   [[ -f "$itd_config_source" ]] || {

@@ -1,0 +1,6 @@
+# Reviewed ITD source and build inputs. Update together with the patch.
+ITD_UPSTREAM_URL=https://git.elara.ws/Elara6331/itd.git
+ITD_UPSTREAM_REVISION=b79806e9de4ed1b9bd3af6bfb60db7c35dc49d35
+ITD_PATCH_SHA256=1d6aff7cb1cea69857887e2db3a1c3011f23f97e178b3edae3fdf1b18489bbd2
+ITD_GO_VERSION=1.23.8
+ITD_EMBEDDED_VERSION=elixir-dfu-only+b79806e.patch-1d6aff7cb1ce
