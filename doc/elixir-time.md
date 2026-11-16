@@ -139,6 +139,22 @@ the sole approved automated time sync: it starts the temporary DFU-only ITD
 daemon, runs one explicit `itctl set time now`, stops that daemon, and only
 then starts the recorder. Use `--no-sync-time` to skip that clock write.
 
+Run the maintained recorder from this source repository. Private recordings,
+manual counts, and timing notes belong under
+`$HOME/Documents/dev-share/pinetime/study-sessions/`; set `ELIXIR_HR_DATA_DIR`
+to override the recording destination. Retained application firmware
+and rollback archives belong under
+`$HOME/Documents/dev-share/pinetime/firmware/`. These are local artifacts, not
+files to publish in Git. The corrected baseline application archives are kept
+in `firmware/baseline-1.16.12/study/` and `firmware/baseline-1.16.12/normal/`;
+the upstream rollback application is in `firmware/upstream-1.16.1/`. Verify
+the local `firmware/SHA256SUMS` before using a retained archive. The recorder
+checks its private output directory before connecting or synchronising the
+watch clock. Existing
+`scripts/hr-study/data/` files are legacy data; that ignored path is no longer
+the default for new sessions. A separate baseline worktree, standalone
+recorder snapshot, and standalone launcher copies are not required.
+
 ## First upgrade and recovery checklist
 
 The device inspected before this project was running InfiniTime `1.14.1`, but
@@ -261,8 +277,10 @@ directories:
 
 Preparation checks the cached binaries and copies them into `/tmp/elixir-itd`
 with configuration under `/tmp/elixir-itd-config`. Clearing `/tmp` therefore
-requires preparation again, not a rebuild. The durable cache survives until
-explicitly removed. Keep it ignored and keep session data private.
+requires preparation again, not a rebuild. The cache survives until explicitly
+removed, but its contents are disposable and rebuildable. Keep it ignored;
+keep retained firmware and study data in their private `dev-share/pinetime/`
+directories rather than inside the helper cache.
 
 For a study, use `scripts/hr-study/record-prepared.sh`. That wrapper restores
 the helper and holds a sleep inhibitor for the bounded recorder process.

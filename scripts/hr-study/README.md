@@ -121,14 +121,31 @@ cadence. The logger reconnects every 15 seconds using the existing BlueZ paired
 device object. Initial connection subscribes then sends the duration-bearing
 `START`; a reconnect subscribes, then explicitly sends `FLUSH`.
 
-Each output is new, mode-0600 JSONL under ignored `scripts/hr-study/data/`.
-Keep manual counts and timing notes private alongside the recording. Do not
-commit recordings, local readiness reports, cache manifests, or helper logs.
-Analyse without host Python or a BLE connection:
+Each output is new, mode-0600 JSONL under
+`$HOME/Documents/dev-share/pinetime/study-sessions/`. Set `ELIXIR_HR_DATA_DIR`
+to select another dedicated private output directory. The launcher creates
+new PineTime/output directories with mode 0700 and requires existing ones to
+be owned by the current user with mode 0700. It leaves the permissions of the
+parent `dev-share` directory unchanged. It resolves the output path and checks
+that it can write there before connecting or synchronising the watch clock.
+Output paths cannot contain commas, double quotes, or newlines because of
+Docker's bind-mount argument format.
+
+Keep manual counts and timing notes private alongside the recording. Retained
+firmware archives belong under `$HOME/Documents/dev-share/pinetime/firmware/`;
+disposable helper builds remain in the repository's ignored `.cache/itd/`.
+Use this repository's maintained scripts; the old standalone launchers and
+recorder snapshot are no longer needed. Do not commit recordings, local
+readiness reports, cache manifests, or helper logs. The old
+`scripts/hr-study/data/` path remains ignored for legacy files but is no longer
+the default output location.
+
+Analyse without host Python or a BLE connection, passing the actual filenames:
 
 ```sh
-./scripts/hr-study/summarize.sh scripts/hr-study/data/baseline-004-<UTC>.jsonl
-./scripts/hr-study/compare.sh scripts/hr-study/data/baseline-004-<UTC>.jsonl scripts/hr-study/data/ppgv2-005-<UTC>.jsonl
+study_data="${ELIXIR_HR_DATA_DIR:-$HOME/Documents/dev-share/pinetime/study-sessions}"
+./scripts/hr-study/summarize.sh "$study_data/baseline-004-<UTC>.jsonl"
+./scripts/hr-study/compare.sh "$study_data/baseline-004-<UTC>.jsonl" "$study_data/ppgv2-005-<UTC>.jsonl"
 ```
 
 The comparison uses actual measurement-window outcomes, including unchanged

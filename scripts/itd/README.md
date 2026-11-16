@@ -3,7 +3,8 @@
 This directory preserves the ITD customization used for bounded ElixirTime
 diagnostics and application DFU. The versioned inputs are the upstream source
 lock, the small patch, and the build recipe. Generated source and binaries
-stay in an ignored local cache. A sibling ITD checkout is optional.
+stay in an ignored local cache. A sibling ITD checkout is optional; the
+maintained recipe and patch in this repository are sufficient to rebuild.
 
 ## Source and customization
 
@@ -82,6 +83,13 @@ The default `.cache/` directory is already ignored. Keep any alternative cache
 outside tracked source, and never force-add binaries, logs, or generated
 provenance. Build provenance records source and toolchain details for local
 verification; it is not a file to publish.
+
+This cache is disposable build state. Keep retained firmware archives under
+`$HOME/Documents/dev-share/pinetime/firmware/` and private study recordings
+under `$HOME/Documents/dev-share/pinetime/study-sessions/` instead. The study
+launcher accepts `ELIXIR_HR_DATA_DIR` for another private output destination.
+Use the maintained launchers in this repository; standalone helper scripts
+and recorder snapshots are no longer needed.
 
 ## Prepare and use
 

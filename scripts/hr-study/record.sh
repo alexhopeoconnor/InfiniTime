@@ -38,6 +38,10 @@ stops that daemon, then starts the Docker-only BLE logger.
 Supply the paired watch address with --address or ELIXIR_HR_ADDRESS. Keep the
 actual device address in your local environment, outside version control.
 
+Recordings default to $HOME/Documents/dev-share/pinetime/study-sessions.
+Set ELIXIR_HR_DATA_DIR to use another private output directory. The launcher
+checks this directory before connecting or synchronising the watch clock.
+
 The requested duration is an on-watch capture lease, capped at 2700 seconds
 (45 minutes) to protect the 128-record RAM FIFO. If the watch is out of range
 when that lease ends, it retains the completed records but stops adding more.
@@ -90,6 +94,41 @@ done
 [[ "$address" =~ ^([[:xdigit:]]{2}:){5}[[:xdigit:]]{2}$ ]] || { echo "address must be a Bluetooth MAC address" >&2; exit 2; }
 [[ "$algorithm" == "baseline" || "$algorithm" == "ppgv2" ]] || { echo "algorithm must be baseline or ppgv2" >&2; exit 2; }
 
+ensure_private_directory() {
+  local directory="$1"
+  mkdir -p -m 700 -- "$directory"
+  [[ -O "$directory" && "$(stat -Lc '%a' -- "$directory")" == 700 ]] || {
+    echo "Study directories must be owned by the current user with mode 0700. Choose a private ELIXIR_HR_DATA_DIR: $directory" >&2
+    exit 1
+  }
+}
+
+prepare_data_directory() {
+  local pinetime_dir="$HOME/Documents/dev-share/pinetime"
+  local probe
+  data_dir="${ELIXIR_HR_DATA_DIR:-$pinetime_dir/study-sessions}"
+  umask 077
+
+  # Docker --mount uses CSV fields; reject names it cannot represent here.
+  [[ "$data_dir" != *[,$'\n\r"']* ]] || {
+    echo "Study output paths cannot contain commas, double quotes, or newlines." >&2
+    exit 2
+  }
+  if [[ -z "${ELIXIR_HR_DATA_DIR:-}" ]]; then
+    ensure_private_directory "$pinetime_dir"
+  fi
+  ensure_private_directory "$data_dir"
+  data_dir="$(cd -- "$data_dir" && pwd -P)"
+  [[ "$data_dir" != *[,$'\n\r"']* ]] || {
+    echo "The resolved study output path cannot contain commas, double quotes, or newlines." >&2
+    exit 2
+  }
+  # A real write also catches read-only mounts before the watch clock changes.
+  probe="$(mktemp "$data_dir/.write-check.XXXXXX")"
+  rm -- "$probe"
+  readonly data_dir
+}
+
 stop_time_sync_daemon() {
   if [[ -n "$itd_pid" ]] && kill -0 "$itd_pid" 2>/dev/null; then
     kill -INT "$itd_pid" 2>/dev/null || true
@@ -141,6 +180,8 @@ synchronize_watch_time() {
   exit 1
 }
 
+prepare_data_directory
+
 trap stop_time_sync_daemon EXIT INT TERM
 
 if [[ "$synchronize_time" == true ]]; then
@@ -152,9 +193,6 @@ if ! docker image inspect "$image" >/dev/null 2>&1; then
   docker build --tag "$image" "$script_dir"
 fi
 
-umask 077
-data_dir="$script_dir/data"
-mkdir -p "$data_dir"
 output="$data_dir/${label}-$(date -u +%Y%m%dT%H%M%SZ).jsonl"
 
 if ! docker run --rm --init \

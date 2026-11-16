@@ -98,8 +98,16 @@ Use `scripts/hr-study/record-prepared.sh` for a study. It checks for an existing
 recorder, restores the helper, and prevents sleep for the bounded session.
 Supply the watch address with `--address` or `ELIXIR_HR_ADDRESS`; keep actual
 device addresses and private study data out of tracked files. Generated
-binaries, source, checksums, and provenance stay in `.cache/itd/`; recordings
-stay in ignored `scripts/hr-study/data/`.
+binaries, source, checksums, and provenance stay in the disposable `.cache/itd/`
+cache. Private recordings default to
+`$HOME/Documents/dev-share/pinetime/study-sessions/`, overridden with
+`ELIXIR_HR_DATA_DIR`. Retained firmware archives belong under
+`$HOME/Documents/dev-share/pinetime/firmware/`. Use the maintained source and
+scripts in this repository; a baseline worktree, standalone recorder snapshot,
+and sibling ITD checkout are not required. The old `scripts/hr-study/data/`
+path remains ignored for legacy files but is no longer the recording default.
+Create only the PineTime-specific directories with private permissions; never
+change permissions of their shared `dev-share` parent.
 
 After that configuration is reviewed and the user has authorised the BLE
 session, these are the permitted diagnostic operations:
